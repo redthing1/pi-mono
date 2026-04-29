@@ -197,6 +197,10 @@ describe("ExplorationGroupComponent", () => {
 					'cd /repo && rg -n "exploration" packages/coding-agent/src/core/compaction/branch-summarization.ts',
 				expected: "Search /exploration/ in branch-summarization.ts",
 			},
+			{
+				command: 'cd /repo && cat core/src/sandboxing/mod.rs 2>/dev/null || echo "no mod.rs"',
+				expected: "Read mod.rs",
+			},
 		];
 
 		for (const { command, expected } of cases) {
@@ -236,6 +240,11 @@ describe("ExplorationGroupComponent", () => {
 			output: "",
 			status: "complete",
 		});
+		const echoBeforeExploration = formatBashExplorationSummary({
+			command: 'echo "checking" || cat packages/coding-agent/docs/settings.md',
+			output: "",
+			status: "complete",
+		});
 
 		expect(mutating).toBeUndefined();
 		expect(unknown).toBeUndefined();
@@ -243,6 +252,7 @@ describe("ExplorationGroupComponent", () => {
 		expect(stdoutRedirect).toBeUndefined();
 		expect(unknownPipeline).toBeUndefined();
 		expect(multipleSearchPipeline).toBeUndefined();
+		expect(echoBeforeExploration).toBeUndefined();
 	});
 
 	test("summarizes read-to-search shell pipelines", () => {

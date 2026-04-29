@@ -21,6 +21,11 @@ type ParsedShellExploration = {
 	path?: string;
 };
 
+type ShellSegment = {
+	command: string;
+	separator?: "and" | "or" | "pipe" | "sequence";
+};
+
 export function formatBashExplorationSummary(options: {
 	command: string;
 	output: string;
@@ -81,9 +86,10 @@ function parseReadonlyShellExploration(command: string): ParsedShellExploration 
 
 	const explorations: ParsedShellExploration[] = [];
 	for (const segment of splitShellSegments(normalized)) {
-		const tokens = tokenizeShellLike(segment);
+		const tokens = tokenizeShellLike(segment.command);
 		const commandName = basename(tokens[0] ?? "");
 		if (!commandName || NAVIGATION_COMMANDS.has(commandName)) continue;
+		if (segment.separator === "or" && commandName === "echo" && explorations.length > 0) continue;
 
 		const summary = summarizeCommandTokens(commandName, tokens.slice(1));
 		if (summary) {
@@ -246,15 +252,21 @@ function fileBasenamesFromOutput(output: string): string[] {
 	return dedupe(labels);
 }
 
-function splitShellSegments(input: string): string[] {
-	const segments: string[] = [];
+function splitShellSegments(input: string): ShellSegment[] {
+	const segments: ShellSegment[] = [];
 	let current = "";
+	let nextSeparator: ShellSegment["separator"];
 	let quote: "'" | '"' | undefined;
 	let escaped = false;
 
-	const flush = () => {
+	const flush = (separator?: ShellSegment["separator"]) => {
 		const segment = current.trim();
-		if (segment) segments.push(segment);
+		if (segment) {
+			segments.push({ command: segment, separator: nextSeparator });
+			nextSeparator = separator;
+		} else if (separator) {
+			nextSeparator = separator;
+		}
 		current = "";
 	};
 
@@ -282,11 +294,16 @@ function splitShellSegments(input: string): string[] {
 			continue;
 		}
 		if (char === ";") {
-			flush();
+			flush("sequence");
+			continue;
+		}
+		if (char === "|" && input[index + 1] === "|") {
+			flush("or");
+			index++;
 			continue;
 		}
 		if (char === "|" || (char === "&" && input[index + 1] === "&")) {
-			flush();
+			flush(char === "&" ? "and" : "pipe");
 			if (char === "&") index++;
 			continue;
 		}
