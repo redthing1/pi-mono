@@ -268,8 +268,7 @@ async function createSessionManager(
 				SessionManager.listAll,
 			);
 			if (!selectedPath) {
-				console.log(chalk.dim("No session selected"));
-				process.exit(0);
+				return SessionManager.create(cwd, sessionDir);
 			}
 			return SessionManager.open(selectedPath, sessionDir);
 		} finally {
