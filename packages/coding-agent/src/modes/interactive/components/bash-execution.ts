@@ -12,8 +12,8 @@ import {
 } from "../../../core/tools/truncate.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
-import { formatBashExplorationSummary } from "./exploration-summary.js";
 import { keyHint, keyText } from "./keybinding-hints.js";
+import { formatBashExplorationSummary } from "./shell-exploration-summary.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
 
 // Preview line limit when not expanded (matches tool execution behavior)

@@ -5,7 +5,7 @@ import {
 	ExplorationGroupComponent,
 	isExplorationToolSnapshot,
 } from "../src/modes/interactive/components/exploration-group.js";
-import { formatBashExplorationSummary } from "../src/modes/interactive/components/exploration-summary.js";
+import { formatBashExplorationSummary } from "../src/modes/interactive/components/shell-exploration-summary.js";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
 
@@ -153,6 +153,19 @@ describe("ExplorationGroupComponent", () => {
 			{ command: "tree -L 2 packages/coding-agent/src", expected: "List src" },
 			{ command: "cat packages/coding-agent/docs/settings.md", expected: "Read settings.md" },
 			{ command: "sed -n '1,20p' packages/coding-agent/docs/settings.md", expected: "Read settings.md" },
+			{
+				command: 'rg -n "ExplorationGroup\\|explorationGroup" packages/coding-agent/src/ --no-heading',
+				expected: "Search /ExplorationGroup|explorationGroup/ in src",
+			},
+			{
+				command: 'cd /repo && rg -rn "exploration" packages/coding-agent/src/ --no-heading 2>/dev/null | head -30',
+				expected: "Search /exploration/ in src",
+			},
+			{
+				command:
+					'cd /repo && rg -n "exploration" packages/coding-agent/src/core/compaction/branch-summarization.ts',
+				expected: "Search /exploration/ in branch-summarization.ts",
+			},
 		];
 
 		for (const { command, expected } of cases) {
@@ -177,10 +190,16 @@ describe("ExplorationGroupComponent", () => {
 			output: "",
 			status: "complete",
 		});
+		const stdoutRedirect = formatBashExplorationSummary({
+			command: "rg TODO packages/coding-agent > matches.txt",
+			output: "",
+			status: "complete",
+		});
 
 		expect(mutating).toBeUndefined();
 		expect(unknown).toBeUndefined();
 		expect(sedWithoutFile).toBeUndefined();
+		expect(stdoutRedirect).toBeUndefined();
 	});
 
 	test("shows exploring while any nested tool is still pending", () => {
