@@ -201,6 +201,15 @@ describe("ExplorationGroupComponent", () => {
 				command: 'cd /repo && cat core/src/sandboxing/mod.rs 2>/dev/null || echo "no mod.rs"',
 				expected: "Read mod.rs",
 			},
+			{
+				command: 'find /repo/pi-subagents -type f -name "*.md" | grep -v SKILL.md',
+				expected: "Find *.md in pi-subagents",
+			},
+			{
+				command:
+					'find /repo/pi-mono -name "*.ts" -newer /repo/pi-mono/packages/coding-agent/examples/extensions/README.md 2>/dev/null | grep -i "extensions\\|delegate\\|delegat" | head -20',
+				expected: "Find *.ts in pi-mono",
+			},
 		];
 
 		for (const { command, expected } of cases) {
@@ -245,6 +254,16 @@ describe("ExplorationGroupComponent", () => {
 			output: "",
 			status: "complete",
 		});
+		const contentSearchWithGrepFilter = formatBashExplorationSummary({
+			command: "rg TODO packages/coding-agent | grep settings",
+			output: "",
+			status: "complete",
+		});
+		const findWithRecursiveGrep = formatBashExplorationSummary({
+			command: 'find /repo -name "*.ts" | grep -R settings',
+			output: "",
+			status: "complete",
+		});
 
 		expect(mutating).toBeUndefined();
 		expect(unknown).toBeUndefined();
@@ -253,6 +272,8 @@ describe("ExplorationGroupComponent", () => {
 		expect(unknownPipeline).toBeUndefined();
 		expect(multipleSearchPipeline).toBeUndefined();
 		expect(echoBeforeExploration).toBeUndefined();
+		expect(contentSearchWithGrepFilter).toBeUndefined();
+		expect(findWithRecursiveGrep).toBeUndefined();
 	});
 
 	test("summarizes read-to-search shell pipelines", () => {

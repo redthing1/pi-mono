@@ -3,6 +3,7 @@ import { theme } from "../theme/theme.js";
 
 const SEARCH_COMMANDS = new Set(["ack", "ag", "egrep", "fgrep", "grep", "pt", "rg", "rga", "ripgrep-all"]);
 const FIND_COMMANDS = new Set(["fd", "fdfind", "find"]);
+const GREP_FILTER_COMMANDS = new Set(["egrep", "fgrep", "grep"]);
 const LIST_COMMANDS = new Set(["exa", "eza", "ls", "tree"]);
 const READ_COMMANDS = new Set(["bat", "batcat", "cat", "head", "less", "more", "nl", "sed", "tail"]);
 const NAVIGATION_COMMANDS = new Set(["cd", "pwd", "true"]);
@@ -90,6 +91,7 @@ function parseReadonlyShellExploration(command: string): ParsedShellExploration 
 		const commandName = basename(tokens[0] ?? "");
 		if (!commandName || NAVIGATION_COMMANDS.has(commandName)) continue;
 		if (segment.separator === "or" && commandName === "echo" && explorations.length > 0) continue;
+		if (isOutputFilterSegment(segment, commandName, tokens.slice(1), explorations)) continue;
 
 		const summary = summarizeCommandTokens(commandName, tokens.slice(1));
 		if (summary) {
@@ -100,6 +102,69 @@ function parseReadonlyShellExploration(command: string): ParsedShellExploration 
 		return undefined;
 	}
 	return combineExplorationPipeline(explorations);
+}
+
+function isOutputFilterSegment(
+	segment: ShellSegment,
+	command: string,
+	tokens: string[],
+	explorations: ParsedShellExploration[],
+): boolean {
+	const previous = explorations[explorations.length - 1];
+	if (segment.separator !== "pipe" || !previous) return false;
+	if (previous.action !== "find" && previous.action !== "list") return false;
+	if (!GREP_FILTER_COMMANDS.has(command)) return false;
+	return isStdinGrepFilter(tokens);
+}
+
+function isStdinGrepFilter(tokens: string[]): boolean {
+	const positional: string[] = [];
+	const regexpValues: string[] = [];
+	const safeLongOptions = new Set([
+		"--extended-regexp",
+		"--fixed-strings",
+		"--ignore-case",
+		"--invert-match",
+		"--line-number",
+		"--line-regexp",
+		"--no-filename",
+		"--word-regexp",
+	]);
+	const safeShortOptions = new Set(["E", "F", "H", "h", "i", "n", "v", "w", "x"]);
+
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (!token) continue;
+		if (token === "--") {
+			positional.push(...tokens.slice(index + 1));
+			break;
+		}
+		if (token === "-e" || token === "--regexp") {
+			const value = tokens[index + 1];
+			if (!value) return false;
+			regexpValues.push(value);
+			index++;
+			continue;
+		}
+		if (token.startsWith("-e") && token.length > 2) {
+			regexpValues.push(token.slice(2));
+			continue;
+		}
+		if (token.startsWith("--regexp=")) {
+			regexpValues.push(token.slice("--regexp=".length));
+			continue;
+		}
+		if (safeLongOptions.has(token)) continue;
+		if (token.startsWith("--")) return false;
+		if (token.startsWith("-") && token.length > 1) {
+			if ([...token.slice(1)].every((char) => safeShortOptions.has(char))) continue;
+			return false;
+		}
+		positional.push(token);
+	}
+
+	if (regexpValues.length > 0) return positional.length === 0;
+	return positional.length === 1;
 }
 
 function combineExplorationPipeline(explorations: ParsedShellExploration[]): ParsedShellExploration | undefined {
@@ -164,7 +229,7 @@ function summarizeFindTokens(command: string, tokens: string[]): ParsedShellExpl
 	if (command === "find") {
 		const pattern = optionValue(tokens, new Set(["-iname", "-name", "-path"]));
 		const positional = positionalArgs(tokens, {
-			optionsWithValues: new Set(["-maxdepth", "-mindepth", "-name", "-iname", "-path", "-type"]),
+			optionsWithValues: new Set(["-maxdepth", "-mindepth", "-name", "-iname", "-newer", "-path", "-type"]),
 		});
 		const path = positional[0] ?? ".";
 		return pattern ? { action: "find", pattern, path } : { action: "list", path };
