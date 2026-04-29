@@ -5,6 +5,8 @@ import {
 	findInitialModel,
 	parseModelPattern,
 	resolveCliModel,
+	resolveCliProvider,
+	resolveModelScope,
 } from "../src/core/model-resolver.js";
 
 // Mock models for testing
@@ -369,6 +371,50 @@ describe("resolveCliModel", () => {
 		expect(result.error).toBeUndefined();
 		expect(result.model?.provider).toBe("openrouter");
 		expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
+	});
+});
+
+describe("resolveCliProvider", () => {
+	test("resolves providers case-insensitively", () => {
+		const registry = {
+			getAll: () => allModels,
+		} as unknown as Parameters<typeof resolveCliProvider>[0]["modelRegistry"];
+
+		const result = resolveCliProvider({
+			cliProvider: "OpenAI",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.provider).toBe("openai");
+	});
+
+	test("returns a clear error for unknown providers", () => {
+		const registry = {
+			getAll: () => allModels,
+		} as unknown as Parameters<typeof resolveCliProvider>[0]["modelRegistry"];
+
+		const result = resolveCliProvider({
+			cliProvider: "missing",
+			modelRegistry: registry,
+		});
+
+		expect(result.provider).toBeUndefined();
+		expect(result.error).toContain('Unknown provider "missing"');
+	});
+});
+
+describe("resolveModelScope", () => {
+	test("filters candidates to provider before fuzzy matching", async () => {
+		const registry = {
+			getAvailable: async () => allModels,
+		} as unknown as Parameters<typeof resolveModelScope>[1];
+
+		const result = await resolveModelScope(["gpt"], registry, { provider: "openai" });
+
+		expect(result).toHaveLength(1);
+		expect(result[0]?.model.provider).toBe("openai");
+		expect(result[0]?.model.id).toBe("gpt-4o");
 	});
 });
 

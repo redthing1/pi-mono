@@ -78,6 +78,7 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
+	providerLastModels?: Record<string, string>;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	transport?: TransportSetting; // default: "sse"
 	steeringMode?: "all" | "one-at-a-time";
@@ -596,6 +597,10 @@ export class SettingsManager {
 		return this.settings.defaultModel;
 	}
 
+	getProviderLastModel(provider: string): string | undefined {
+		return this.settings.providerLastModels?.[provider];
+	}
+
 	setDefaultProvider(provider: string): void {
 		this.globalSettings.defaultProvider = provider;
 		this.markModified("defaultProvider");
@@ -609,10 +614,23 @@ export class SettingsManager {
 	}
 
 	setDefaultModelAndProvider(provider: string, modelId: string): void {
+		const providerLastModels = this.globalSettings.providerLastModels ?? {};
+		if (
+			this.globalSettings.defaultProvider === provider &&
+			this.globalSettings.defaultModel === modelId &&
+			providerLastModels[provider] === modelId
+		) {
+			return;
+		}
 		this.globalSettings.defaultProvider = provider;
 		this.globalSettings.defaultModel = modelId;
+		this.globalSettings.providerLastModels = {
+			...providerLastModels,
+			[provider]: modelId,
+		};
 		this.markModified("defaultProvider");
 		this.markModified("defaultModel");
+		this.markModified("providerLastModels", provider);
 		this.save();
 	}
 

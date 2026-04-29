@@ -246,8 +246,15 @@ export function parseModelPattern(
  * The algorithm tries to match the full pattern first, then progressively
  * strips colon-suffixes to find a match.
  */
-export async function resolveModelScope(patterns: string[], modelRegistry: ModelRegistry): Promise<ScopedModel[]> {
+export async function resolveModelScope(
+	patterns: string[],
+	modelRegistry: ModelRegistry,
+	options?: { provider?: string },
+): Promise<ScopedModel[]> {
 	const availableModels = await modelRegistry.getAvailable();
+	const candidateModels = options?.provider
+		? availableModels.filter((model) => model.provider === options.provider)
+		: availableModels;
 	const scopedModels: ScopedModel[] = [];
 
 	for (const pattern of patterns) {
@@ -268,7 +275,7 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 
 			// Match against "provider/modelId" format OR just model ID
 			// This allows "*sonnet*" to match without requiring "anthropic/*sonnet*"
-			const matchingModels = availableModels.filter((m) => {
+			const matchingModels = candidateModels.filter((m) => {
 				const fullId = `${m.provider}/${m.id}`;
 				return minimatch(fullId, globPattern, { nocase: true }) || minimatch(m.id, globPattern, { nocase: true });
 			});
@@ -286,7 +293,7 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 			continue;
 		}
 
-		const { model, thinkingLevel, warning } = parseModelPattern(pattern, availableModels);
+		const { model, thinkingLevel, warning } = parseModelPattern(pattern, candidateModels);
 
 		if (warning) {
 			console.warn(chalk.yellow(`Warning: ${warning}`));
@@ -315,6 +322,47 @@ export interface ResolveCliModelResult {
 	 * When set, model will be undefined.
 	 */
 	error: string | undefined;
+}
+
+export interface ResolveCliProviderResult {
+	provider: string | undefined;
+	error: string | undefined;
+}
+
+function resolveProviderFromModels(
+	cliProvider: string | undefined,
+	availableModels: Model<Api>[],
+): ResolveCliProviderResult {
+	if (!cliProvider) {
+		return { provider: undefined, error: undefined };
+	}
+
+	if (availableModels.length === 0) {
+		return {
+			provider: undefined,
+			error: "No models available. Check your installation or add models to models.json.",
+		};
+	}
+
+	const provider = availableModels.find(
+		(model) => model.provider.toLowerCase() === cliProvider.toLowerCase(),
+	)?.provider;
+	if (!provider) {
+		return {
+			provider: undefined,
+			error: `Unknown provider "${cliProvider}". Use --list-models to see available providers/models.`,
+		};
+	}
+
+	return { provider, error: undefined };
+}
+
+export function resolveCliProvider(options: {
+	cliProvider?: string;
+	modelRegistry: ModelRegistry;
+}): ResolveCliProviderResult {
+	const { cliProvider, modelRegistry } = options;
+	return resolveProviderFromModels(cliProvider, modelRegistry.getAll());
 }
 
 /**
@@ -350,20 +398,15 @@ export function resolveCliModel(options: {
 		};
 	}
 
-	// Build canonical provider lookup (case-insensitive)
-	const providerMap = new Map<string, string>();
-	for (const m of availableModels) {
-		providerMap.set(m.provider.toLowerCase(), m.provider);
-	}
-
-	let provider = cliProvider ? providerMap.get(cliProvider.toLowerCase()) : undefined;
-	if (cliProvider && !provider) {
+	const resolvedProvider = resolveProviderFromModels(cliProvider, availableModels);
+	if (resolvedProvider.error) {
 		return {
 			model: undefined,
 			warning: undefined,
-			error: `Unknown provider "${cliProvider}". Use --list-models to see available providers/models.`,
+			error: resolvedProvider.error,
 		};
 	}
+	let provider = resolvedProvider.provider;
 
 	// If no explicit --provider, try to interpret "provider/model" format first.
 	// When the prefix before the first slash matches a known provider, prefer that
@@ -377,7 +420,7 @@ export function resolveCliModel(options: {
 		const slashIndex = cliModel.indexOf("/");
 		if (slashIndex !== -1) {
 			const maybeProvider = cliModel.substring(0, slashIndex);
-			const canonical = providerMap.get(maybeProvider.toLowerCase());
+			const canonical = resolveProviderFromModels(maybeProvider, availableModels).provider;
 			if (canonical) {
 				provider = canonical;
 				pattern = cliModel.substring(slashIndex + 1);

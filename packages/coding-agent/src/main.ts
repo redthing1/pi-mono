@@ -7,7 +7,7 @@
 
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
+import { type ImageContent, supportsXhigh } from "@mariozechner/pi-ai";
 import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
@@ -28,7 +28,7 @@ import { exportFromFile } from "./core/export-html/index.js";
 import type { ExtensionFactory } from "./core/extensions/types.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
+import { resolveCliModel, resolveCliProvider, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
 import type { CreateAgentSessionOptions } from "./core/sdk.js";
 import {
@@ -289,6 +289,7 @@ function buildSessionOptions(
 	hasExistingSession: boolean,
 	modelRegistry: ModelRegistry,
 	settingsManager: SettingsManager,
+	providerScope?: string,
 ): {
 	options: CreateAgentSessionOptions;
 	cliThinkingFromModel: boolean;
@@ -328,20 +329,22 @@ function buildSessionOptions(
 		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
 		const savedProvider = settingsManager.getDefaultProvider();
 		const savedModelId = settingsManager.getDefaultModel();
-		const savedModel = savedProvider && savedModelId ? modelRegistry.find(savedProvider, savedModelId) : undefined;
-		const savedInScope = savedModel ? scopedModels.find((sm) => modelsAreEqual(sm.model, savedModel)) : undefined;
+		const findScopedModel = (provider: string | undefined, modelId: string | undefined): ScopedModel | undefined =>
+			provider && modelId
+				? scopedModels.find((scoped) => scoped.model.provider === provider && scoped.model.id === modelId)
+				: undefined;
+		const savedInScope = findScopedModel(savedProvider, savedModelId);
+		const providerLastModelId = providerScope ? settingsManager.getProviderLastModel(providerScope) : undefined;
+		const providerLastInScope = findScopedModel(providerScope, providerLastModelId);
 
-		if (savedInScope) {
-			options.model = savedInScope.model;
+		const selectedScopedModel = providerScope
+			? (providerLastInScope ?? savedInScope ?? scopedModels[0])
+			: (savedInScope ?? scopedModels[0]);
+		if (selectedScopedModel) {
+			options.model = selectedScopedModel.model;
 			// Use thinking level from scoped model config if explicitly set
-			if (!parsed.thinking && savedInScope.thinkingLevel) {
-				options.thinkingLevel = savedInScope.thinkingLevel;
-			}
-		} else {
-			options.model = scopedModels[0].model;
-			// Use thinking level from first scoped model if explicitly set
-			if (!parsed.thinking && scopedModels[0].thinkingLevel) {
-				options.thinkingLevel = scopedModels[0].thinkingLevel;
+			if (!parsed.thinking && selectedScopedModel.thinkingLevel) {
+				options.thinkingLevel = selectedScopedModel.thinkingLevel;
 			}
 		}
 	}
@@ -550,9 +553,31 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 		];
 
+		let providerScope: string | undefined;
+		if (parsed.provider && !parsed.model) {
+			const resolvedProvider = resolveCliProvider({
+				cliProvider: parsed.provider,
+				modelRegistry,
+			});
+			if (resolvedProvider.error) {
+				diagnostics.push({ type: "error", message: resolvedProvider.error });
+			} else {
+				providerScope = resolvedProvider.provider;
+			}
+		}
+
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
-		const scopedModels =
-			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRegistry) : [];
+		let scopedModels: ScopedModel[] = [];
+		if (providerScope && !parsed.models) {
+			scopedModels = (await modelRegistry.getAvailable())
+				.filter((model) => model.provider === providerScope)
+				.map((model) => ({ model }));
+		} else if (modelPatterns && modelPatterns.length > 0) {
+			scopedModels = await resolveModelScope(modelPatterns, modelRegistry, { provider: providerScope });
+		}
+		if (providerScope && scopedModels.length === 0) {
+			diagnostics.push({ type: "error", message: `No available models found for provider "${providerScope}".` });
+		}
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,
@@ -563,6 +588,7 @@ export async function main(args: string[], options?: MainOptions) {
 			sessionManager.buildSessionContext().messages.length > 0,
 			modelRegistry,
 			settingsManager,
+			providerScope,
 		);
 		diagnostics.push(...sessionOptionDiagnostics);
 

@@ -25,6 +25,38 @@ describe("SettingsManager", () => {
 	});
 
 	describe("preserves externally added settings", () => {
+		it("should track last selected model per provider", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(
+				settingsPath,
+				JSON.stringify({
+					providerLastModels: {
+						anthropic: "claude-sonnet",
+					},
+				}),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			// Simulate an external settings edit while pi is running.
+			const currentSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			currentSettings.providerLastModels.google = "gemini-pro";
+			writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
+
+			manager.setDefaultModelAndProvider("openai", "gpt-4o");
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(savedSettings.defaultProvider).toBe("openai");
+			expect(savedSettings.defaultModel).toBe("gpt-4o");
+			expect(savedSettings.providerLastModels).toEqual({
+				anthropic: "claude-sonnet",
+				google: "gemini-pro",
+				openai: "gpt-4o",
+			});
+			expect(manager.getProviderLastModel("openai")).toBe("gpt-4o");
+		});
+
 		it("should preserve enabledModels when changing thinking level", async () => {
 			// Create initial settings file
 			const settingsPath = join(agentDir, "settings.json");
