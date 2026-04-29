@@ -148,7 +148,7 @@ describe("DefaultPackageManager git update", () => {
 			expect(executedCommands).not.toContain("git reset --hard @{upstream}");
 			expect(executedCommands).not.toContain("git reset --hard origin/HEAD");
 			expect(executedCommands).not.toContain("git clean -fdx");
-			expect(executedCommands).not.toContain("npm install");
+			expect(executedCommands).not.toContain("bun install --omit=dev --omit=peer --ignore-scripts");
 		});
 
 		it("should update to latest commit when remote has new commits", async () => {
