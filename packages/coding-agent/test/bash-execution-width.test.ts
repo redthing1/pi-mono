@@ -113,4 +113,25 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 		expect(rendered).toContain('$ rg -il "compaction" packages/');
 		expect(rendered).toContain("packages/coding-agent/docs/compaction.md");
 	});
+
+	it("wraps compact bash exploration rows without dropping tail text", () => {
+		const { stub } = createTuiStub(44);
+		const component = new BashExecutionComponent(
+			'rg -n "alpha beta gamma delta epsilon zeta eta theta" packages/coding-agent/src',
+			stub,
+			false,
+			{ compactExploration: true },
+		);
+		component.setComplete(0, false);
+
+		const lines = component.render(44);
+		const rendered = stripAnsi(lines.join("\n"));
+		expect(rendered).toContain("alpha beta");
+		expect(rendered).toContain("theta");
+		expect(rendered).toContain("in src");
+		expect(lines.some((line) => stripAnsi(line).startsWith("    "))).toBe(true);
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(44);
+		}
+	});
 });

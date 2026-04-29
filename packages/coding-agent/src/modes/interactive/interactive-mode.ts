@@ -1690,7 +1690,12 @@ export class InteractiveMode {
 		this.lastExplorationGroup = undefined;
 	}
 
-	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
+	private createToolExecutionComponent(
+		toolName: string,
+		toolCallId: string,
+		args: unknown,
+		options: { argsComplete?: boolean } = {},
+	): ToolExecutionComponent {
 		const component = new ToolExecutionComponent(
 			toolName,
 			toolCallId,
@@ -1698,6 +1703,7 @@ export class InteractiveMode {
 			{
 				showImages: this.settingsManager.getShowImages(),
 				imageWidthCells: this.settingsManager.getImageWidthCells(),
+				argsComplete: options.argsComplete,
 			},
 			this.getRegisteredToolDefinition(toolName),
 			this.ui,
@@ -1710,14 +1716,7 @@ export class InteractiveMode {
 	private attachToolExecutionComponent(component: ToolExecutionComponent): PendingToolView {
 		const snapshot = component.getPresentationSnapshot();
 		if (this.settingsManager.getCompactExploration() && isExplorationToolSnapshot(snapshot)) {
-			let group = this.lastExplorationGroup;
-			const lastChild = this.chatContainer.children[this.chatContainer.children.length - 1];
-			if (!group || lastChild !== group) {
-				group = new ExplorationGroupComponent();
-				group.setExpanded(this.toolOutputExpanded);
-				this.chatContainer.addChild(group);
-				this.lastExplorationGroup = group;
-			}
+			const group = this.getOrCreateCurrentExplorationGroup();
 			group.addTool(component);
 			return { component, group };
 		}
@@ -1725,6 +1724,56 @@ export class InteractiveMode {
 		this.resetExplorationGrouping();
 		this.chatContainer.addChild(component);
 		return { component };
+	}
+
+	private getOrCreateCurrentExplorationGroup(): ExplorationGroupComponent {
+		const lastChild = this.chatContainer.children[this.chatContainer.children.length - 1];
+		if (lastChild instanceof ExplorationGroupComponent && lastChild === this.lastExplorationGroup) {
+			return lastChild;
+		}
+
+		const group = new ExplorationGroupComponent();
+		group.setExpanded(this.toolOutputExpanded);
+		this.chatContainer.addChild(group);
+		this.lastExplorationGroup = group;
+		return group;
+	}
+
+	private finalizeToolViewArgs(view: PendingToolView): PendingToolView {
+		view.component.setArgsComplete();
+		return this.promoteToolViewIfExploration(view);
+	}
+
+	private promoteToolViewIfExploration(view: PendingToolView): PendingToolView {
+		if (view.group || !this.settingsManager.getCompactExploration()) return view;
+		if (!isExplorationToolSnapshot(view.component.getPresentationSnapshot())) return view;
+		const children = this.chatContainer.children;
+		const index = children.indexOf(view.component);
+		if (index === -1) return view;
+
+		const previousChild = children[index - 1];
+		const nextChild = children[index + 1];
+		let group: ExplorationGroupComponent;
+
+		if (previousChild instanceof ExplorationGroupComponent) {
+			children.splice(index, 1);
+			previousChild.addTool(view.component);
+			group = previousChild;
+		} else if (nextChild instanceof ExplorationGroupComponent) {
+			children.splice(index, 1);
+			nextChild.prependTool(view.component);
+			group = nextChild;
+		} else {
+			group = new ExplorationGroupComponent();
+			group.setExpanded(this.toolOutputExpanded);
+			children[index] = group;
+			group.addTool(view.component);
+		}
+
+		if (children[children.length - 1] === group) {
+			this.lastExplorationGroup = group;
+		}
+		return { component: view.component, group };
 	}
 
 	private refreshToolView(view: PendingToolView): void {
@@ -2864,9 +2913,11 @@ export class InteractiveMode {
 								const view = this.attachToolExecutionComponent(component);
 								this.pendingTools.set(content.id, view);
 							} else {
-								const view = this.pendingTools.get(content.id);
+								let view = this.pendingTools.get(content.id);
 								if (view) {
 									view.component.updateArgs(content.arguments);
+									view = this.promoteToolViewIfExploration(view);
+									this.pendingTools.set(content.id, view);
 									this.refreshToolView(view);
 								}
 							}
@@ -2905,8 +2956,9 @@ export class InteractiveMode {
 						this.pendingTools.clear();
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
-						for (const [, view] of this.pendingTools.entries()) {
-							view.component.setArgsComplete();
+						for (const [toolCallId, existingView] of this.pendingTools.entries()) {
+							const view = this.finalizeToolViewArgs(existingView);
+							this.pendingTools.set(toolCallId, view);
 							this.refreshToolView(view);
 						}
 					}
@@ -2920,8 +2972,14 @@ export class InteractiveMode {
 			case "tool_execution_start": {
 				let view = this.pendingTools.get(event.toolCallId);
 				if (!view) {
-					const component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args);
+					const component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args, {
+						argsComplete: true,
+					});
 					view = this.attachToolExecutionComponent(component);
+					this.pendingTools.set(event.toolCallId, view);
+				} else {
+					view.component.updateArgs(event.args);
+					view = this.finalizeToolViewArgs(view);
 					this.pendingTools.set(event.toolCallId, view);
 				}
 				view.component.markExecutionStarted();
@@ -2941,9 +2999,10 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
-				const view = this.pendingTools.get(event.toolCallId);
+				let view = this.pendingTools.get(event.toolCallId);
 				if (view) {
 					view.component.updateResult({ ...event.result, isError: event.isError });
+					view = this.promoteToolViewIfExploration(view);
 					this.refreshToolView(view);
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
@@ -3274,7 +3333,7 @@ export class InteractiveMode {
 								errorMessage = message.errorMessage || "Error";
 							}
 							view.component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
-							this.refreshToolView(view);
+							this.refreshToolView(this.promoteToolViewIfExploration(view));
 						} else {
 							this.pendingTools.set(content.id, view);
 						}
@@ -3282,9 +3341,10 @@ export class InteractiveMode {
 				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
-				const view = this.pendingTools.get(message.toolCallId);
+				let view = this.pendingTools.get(message.toolCallId);
 				if (view) {
 					view.component.updateResult(message);
+					view = this.promoteToolViewIfExploration(view);
 					this.refreshToolView(view);
 					this.pendingTools.delete(message.toolCallId);
 				}

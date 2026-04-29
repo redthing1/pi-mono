@@ -3,6 +3,8 @@ import { Container } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { SessionContext } from "../src/core/session-manager.js";
+import type { ExplorationGroupComponent } from "../src/modes/interactive/components/exploration-group.js";
+import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
 import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.js";
 
@@ -62,6 +64,29 @@ function renderChat(chatContainer: Container): string {
 	return stripAnsi(chatContainer.render(120).join("\n"));
 }
 
+type Harness = ReturnType<typeof createHarness>;
+
+type TestPendingToolView = {
+	component: ToolExecutionComponent;
+	group?: ExplorationGroupComponent;
+};
+
+const privateMethods = InteractiveMode.prototype as unknown as {
+	renderSessionContext(this: Harness, sessionContext: SessionContext): void;
+	setToolsExpanded(this: Harness, expanded: boolean): void;
+	createToolExecutionComponent(
+		this: Harness,
+		toolName: string,
+		toolCallId: string,
+		args: unknown,
+		options?: { argsComplete?: boolean },
+	): ToolExecutionComponent;
+	attachToolExecutionComponent(this: Harness, component: ToolExecutionComponent): TestPendingToolView;
+	finalizeToolViewArgs(this: Harness, view: TestPendingToolView): TestPendingToolView;
+	promoteToolViewIfExploration(this: Harness, view: TestPendingToolView): TestPendingToolView;
+	refreshToolView(this: Harness, view: TestPendingToolView): void;
+};
+
 describe("InteractiveMode exploration rendering", () => {
 	beforeAll(() => {
 		initTheme("dark");
@@ -94,11 +119,7 @@ describe("InteractiveMode exploration rendering", () => {
 				},
 			],
 		};
-		const renderSessionContext = Reflect.get(InteractiveMode.prototype, "renderSessionContext") as (
-			this: ReturnType<typeof createHarness>,
-			sessionContext: SessionContext,
-		) => void;
-		renderSessionContext.call(harness, sessionContext);
+		privateMethods.renderSessionContext.call(harness, sessionContext);
 
 		const collapsed = renderChat(harness.chatContainer);
 		expect(collapsed).toContain("Explored");
@@ -106,11 +127,7 @@ describe("InteractiveMode exploration rendering", () => {
 		expect(collapsed).not.toContain("line one");
 		expect(collapsed).not.toContain("line two");
 
-		const setToolsExpanded = Reflect.get(InteractiveMode.prototype, "setToolsExpanded") as (
-			this: ReturnType<typeof createHarness>,
-			expanded: boolean,
-		) => void;
-		setToolsExpanded.call(harness, true);
+		privateMethods.setToolsExpanded.call(harness, true);
 
 		const expanded = renderChat(harness.chatContainer);
 		expect(expanded).toContain("Read read.ts");
@@ -146,15 +163,78 @@ describe("InteractiveMode exploration rendering", () => {
 				},
 			],
 		};
-		const renderSessionContext = Reflect.get(InteractiveMode.prototype, "renderSessionContext") as (
-			this: ReturnType<typeof createHarness>,
-			sessionContext: SessionContext,
-		) => void;
-		renderSessionContext.call(harness, sessionContext);
+		privateMethods.renderSessionContext.call(harness, sessionContext);
 
 		const rendered = renderChat(harness.chatContainer);
 		expect(rendered).not.toContain("Explored");
 		expect(rendered).toContain("read src/read.ts");
 		expect(rendered).toContain("line one");
+	});
+
+	test("promotes live bash tool view to compact exploration after streamed args complete", () => {
+		const harness = createHarness();
+		const readComponent = privateMethods.createToolExecutionComponent.call(harness, "read", "tool-read-live", {
+			path: "src/read.ts",
+		});
+		const readView = privateMethods.attachToolExecutionComponent.call(harness, readComponent);
+		readView.component.updateResult({
+			content: [{ type: "text", text: "line one" }],
+			isError: false,
+		});
+		privateMethods.refreshToolView.call(harness, readView);
+
+		const component = privateMethods.createToolExecutionComponent.call(harness, "bash", "tool-bash-live", {});
+		let view = privateMethods.attachToolExecutionComponent.call(harness, component);
+		expect(view.group).toBeUndefined();
+
+		view.component.updateArgs({
+			command: 'rg -n "skill" packages/coding-agent/src/ --no-heading 2>/dev/null | head -30',
+		});
+		view = privateMethods.promoteToolViewIfExploration.call(harness, view);
+		expect(view.group).toBeUndefined();
+		view = privateMethods.finalizeToolViewArgs.call(harness, view);
+		view.component.updateResult({
+			content: [{ type: "text", text: "packages/coding-agent/src/core/skills.ts:1:skill" }],
+			isError: false,
+		});
+		privateMethods.refreshToolView.call(harness, view);
+
+		const rendered = renderChat(harness.chatContainer);
+		expect(view.group).toBe(readView.group);
+		expect(view.group).toBeDefined();
+		expect(rendered).toContain("Explored");
+		expect(rendered.match(/Explored/g)).toHaveLength(1);
+		expect(rendered).toContain("Search /skill/ in src");
+		expect(rendered).not.toContain("$ rg");
+	});
+
+	test("promotes completed bash placeholder before a following exploration group", () => {
+		const harness = createHarness();
+		const component = privateMethods.createToolExecutionComponent.call(harness, "bash", "tool-bash-before-read", {});
+		let view = privateMethods.attachToolExecutionComponent.call(harness, component);
+
+		const readComponent = privateMethods.createToolExecutionComponent.call(harness, "read", "tool-read-after-bash", {
+			path: "src/read.ts",
+		});
+		const readView = privateMethods.attachToolExecutionComponent.call(harness, readComponent);
+		readView.component.updateResult({
+			content: [{ type: "text", text: "line one" }],
+			isError: false,
+		});
+		privateMethods.refreshToolView.call(harness, readView);
+
+		view.component.updateArgs({ command: 'rg -n "skill" packages/coding-agent/src' });
+		view = privateMethods.finalizeToolViewArgs.call(harness, view);
+		view.component.updateResult({
+			content: [{ type: "text", text: "packages/coding-agent/src/core/skills.ts:1:skill" }],
+			isError: false,
+		});
+		privateMethods.refreshToolView.call(harness, view);
+
+		const rendered = renderChat(harness.chatContainer);
+		expect(view.group).toBe(readView.group);
+		expect(rendered.match(/Explored/g)).toHaveLength(1);
+		expect(rendered.indexOf("Search /skill/ in src")).toBeLessThan(rendered.indexOf("Read read.ts"));
+		expect(rendered).not.toContain("$ rg");
 	});
 });

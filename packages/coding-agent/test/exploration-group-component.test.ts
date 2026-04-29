@@ -1,4 +1,4 @@
-import type { TUI } from "@mariozechner/pi-tui";
+import { type TUI, visibleWidth } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test } from "vitest";
 import {
@@ -118,6 +118,26 @@ describe("ExplorationGroupComponent", () => {
 		expect(rendered).not.toContain("read.ts\ngrep.ts");
 	});
 
+	test("wraps long compact search rows without dropping tail text", () => {
+		const group = new ExplorationGroupComponent();
+		const grep = createTool("grep", "grep-long", {
+			pattern: "alpha beta gamma delta epsilon zeta eta theta",
+			path: "packages/coding-agent/src",
+		});
+		completeTool(grep, "packages/coding-agent/src/example.ts:1:theta");
+		group.addTool(grep);
+
+		const lines = group.render(44);
+		const rendered = stripAnsi(lines.join("\n"));
+		expect(rendered).toContain("alpha beta");
+		expect(rendered).toContain("theta");
+		expect(rendered).toContain("in src");
+		expect(lines.some((line) => stripAnsi(line).startsWith("    "))).toBe(true);
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(44);
+		}
+	});
+
 	test("summarizes read-only bash exploration commands", () => {
 		const group = new ExplorationGroupComponent();
 		const bash = createTool("bash", "bash-1", {
@@ -137,8 +157,19 @@ describe("ExplorationGroupComponent", () => {
 
 	test("does not classify mutating bash commands as exploration", () => {
 		const bash = createTool("bash", "bash-2", { command: "rm -rf tmp" });
+		bash.setArgsComplete();
 
 		expect(isExplorationToolSnapshot(bash.getPresentationSnapshot())).toBe(false);
+	});
+
+	test("classifies bash exploration only after arguments are complete", () => {
+		const bash = createTool("bash", "bash-incomplete", { command: "rg needle packages/coding-agent/src" });
+
+		expect(isExplorationToolSnapshot(bash.getPresentationSnapshot())).toBe(false);
+
+		bash.setArgsComplete();
+
+		expect(isExplorationToolSnapshot(bash.getPresentationSnapshot())).toBe(true);
 	});
 
 	test("formats common shell exploration tools learned from Codex", () => {
@@ -195,11 +226,33 @@ describe("ExplorationGroupComponent", () => {
 			output: "",
 			status: "complete",
 		});
+		const unknownPipeline = formatBashExplorationSummary({
+			command: "rg TODO packages/coding-agent | jq .",
+			output: "",
+			status: "complete",
+		});
+		const multipleSearchPipeline = formatBashExplorationSummary({
+			command: "rg compact packages/coding-agent | rg settings",
+			output: "",
+			status: "complete",
+		});
 
 		expect(mutating).toBeUndefined();
 		expect(unknown).toBeUndefined();
 		expect(sedWithoutFile).toBeUndefined();
 		expect(stdoutRedirect).toBeUndefined();
+		expect(unknownPipeline).toBeUndefined();
+		expect(multipleSearchPipeline).toBeUndefined();
+	});
+
+	test("summarizes read-to-search shell pipelines", () => {
+		const summary = formatBashExplorationSummary({
+			command: "cat packages/coding-agent/docs/settings.md | rg compact",
+			output: "",
+			status: "complete",
+		});
+
+		expect(stripAnsi(summary?.row ?? "")).toContain("Search /compact/ in settings.md");
 	});
 
 	test("shows exploring while any nested tool is still pending", () => {

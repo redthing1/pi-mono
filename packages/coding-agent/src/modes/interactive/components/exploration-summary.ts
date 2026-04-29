@@ -15,6 +15,7 @@ export function isExplorationToolName(toolName: string): boolean {
 export function isExplorationToolSnapshot(snapshot: ToolExecutionSnapshot): boolean {
 	if (isExplorationToolName(snapshot.toolName)) return true;
 	if (snapshot.toolName !== "bash") return false;
+	if (!snapshot.argsComplete && (!snapshot.result || snapshot.isPartial)) return false;
 	return formatBashToolSummary(snapshot) !== undefined;
 }
 

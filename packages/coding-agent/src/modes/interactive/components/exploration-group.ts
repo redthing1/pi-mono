@@ -1,4 +1,5 @@
-import { Container, truncateToWidth } from "@mariozechner/pi-tui";
+import { Container } from "@mariozechner/pi-tui";
+import { renderCompactExplorationRows } from "./compact-exploration-render.js";
 import {
 	formatExplorationHeader,
 	formatExplorationRows,
@@ -14,9 +15,17 @@ export class ExplorationGroupComponent extends Container {
 	private expanded = false;
 
 	addTool(component: ToolExecutionComponent): void {
+		this.insertTool(component, this.tools.length);
+	}
+
+	prependTool(component: ToolExecutionComponent): void {
+		this.insertTool(component, 0);
+	}
+
+	private insertTool(component: ToolExecutionComponent, index: number): void {
 		if (this.hasTool(component.getPresentationSnapshot().toolCallId)) return;
 		component.setExpanded(this.expanded);
-		this.tools.push(component);
+		this.tools.splice(index, 0, component);
 		this.refresh();
 	}
 
@@ -68,10 +77,7 @@ export class ExplorationGroupComponent extends Container {
 		const snapshots = this.tools.map((tool) => tool.getPresentationSnapshot());
 		const lines = ["", formatExplorationHeader(snapshots, width)];
 		const rows = formatExplorationRows(snapshots);
-		rows.forEach((row, index) => {
-			const prefix = index === 0 ? "  └ " : "    ";
-			lines.push(truncateToWidth(`${prefix}${row}`, width));
-		});
+		lines.push(...renderCompactExplorationRows(rows, width));
 
 		if (this.expanded) {
 			for (const tool of this.tools) {

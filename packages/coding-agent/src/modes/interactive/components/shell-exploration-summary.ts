@@ -79,15 +79,28 @@ function parseReadonlyShellExploration(command: string): ParsedShellExploration 
 	const normalized = stripHarmlessStderrRedirects(command.trim());
 	if (!normalized || UNSAFE_PATTERN.test(normalized)) return undefined;
 
+	const explorations: ParsedShellExploration[] = [];
 	for (const segment of splitShellSegments(normalized)) {
 		const tokens = tokenizeShellLike(segment);
 		const commandName = basename(tokens[0] ?? "");
 		if (!commandName || NAVIGATION_COMMANDS.has(commandName)) continue;
 
 		const summary = summarizeCommandTokens(commandName, tokens.slice(1));
-		if (summary) return summary;
+		if (summary) {
+			explorations.push(summary);
+			continue;
+		}
 		if (POSTPROCESSING_COMMANDS.has(commandName)) continue;
 		return undefined;
+	}
+	return combineExplorationPipeline(explorations);
+}
+
+function combineExplorationPipeline(explorations: ParsedShellExploration[]): ParsedShellExploration | undefined {
+	if (explorations.length === 0) return undefined;
+	if (explorations.length === 1) return explorations[0];
+	if (explorations.length === 2 && explorations[0]?.action === "read" && explorations[1]?.action === "search") {
+		return { ...explorations[1], path: explorations[1].path ?? explorations[0].path };
 	}
 	return undefined;
 }

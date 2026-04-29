@@ -8,6 +8,7 @@ import { theme } from "../theme/theme.js";
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
+	argsComplete?: boolean;
 }
 
 export interface ToolExecutionResultSnapshot {
@@ -22,6 +23,7 @@ export interface ToolExecutionSnapshot {
 	args: unknown;
 	result?: ToolExecutionResultSnapshot;
 	isPartial: boolean;
+	argsComplete: boolean;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -71,6 +73,7 @@ export class ToolExecutionComponent extends Container {
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
+		this.argsComplete = options.argsComplete ?? false;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -234,6 +237,7 @@ export class ToolExecutionComponent extends Container {
 			args: this.args,
 			result: this.result,
 			isPartial: this.isPartial,
+			argsComplete: this.argsComplete,
 		};
 	}
 
