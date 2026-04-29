@@ -3400,9 +3400,15 @@ export class InteractiveMode {
 		if (now - this.lastSigintTime < 500) {
 			void this.shutdown();
 		} else {
+			this.saveEditorDraftToHistory();
 			this.clearEditor();
 			this.lastSigintTime = now;
 		}
+	}
+
+	private saveEditorDraftToHistory(): void {
+		const text = this.editor.getExpandedText?.() ?? this.editor.getText();
+		this.editor.addToHistory?.(text);
 	}
 
 	private handleCtrlD(): void {
