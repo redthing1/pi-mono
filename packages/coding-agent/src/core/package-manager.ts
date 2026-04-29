@@ -135,10 +135,6 @@ interface ConfiguredUpdateSource {
 	scope: InstalledSourceScope;
 }
 
-interface NpmUpdateTarget extends ConfiguredUpdateSource {
-	parsed: NpmSource;
-}
-
 interface GitUpdateTarget extends ConfiguredUpdateSource {
 	parsed: GitSource;
 }
@@ -942,13 +938,11 @@ export class DefaultPackageManager implements PackageManager {
 
 	async install(source: string, options?: { local?: boolean }): Promise<void> {
 		const parsed = this.parseSource(source);
+		this.assertRegistryInstallAllowed(parsed);
 		const scope: SourceScope = options?.local ? "project" : "user";
 		await this.withProgress("install", source, `Installing ${source}...`, async () => {
-			if (parsed.type === "npm") {
-				await this.installNpm(parsed, scope, false);
-				return;
-			}
 			if (parsed.type === "git") {
+				this.warnIfMutableGitSource(source, parsed);
 				await this.installGit(parsed, scope);
 				return;
 			}
@@ -996,6 +990,12 @@ export class DefaultPackageManager implements PackageManager {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
+		if (source) {
+			const explicitParsed = this.parseSource(source);
+			if (explicitParsed.type === "npm") {
+				throw new Error(this.registryPackagesDisabledMessage(source));
+			}
+		}
 		let matched = false;
 		const updateSources: ConfiguredUpdateSource[] = [];
 
@@ -1029,7 +1029,6 @@ export class DefaultPackageManager implements PackageManager {
 			return;
 		}
 
-		const npmCandidates: NpmUpdateTarget[] = [];
 		const gitCandidates: GitUpdateTarget[] = [];
 
 		for (const entry of sources) {
@@ -1038,37 +1037,12 @@ export class DefaultPackageManager implements PackageManager {
 				continue;
 			}
 			if (parsed.type === "npm") {
-				npmCandidates.push({ ...entry, parsed });
 				continue;
 			}
 			gitCandidates.push({ ...entry, parsed });
 		}
 
-		const npmCheckTasks = npmCandidates.map((entry) => async () => ({
-			entry,
-			shouldUpdate: await this.shouldUpdateNpmSource(entry.parsed, entry.scope),
-		}));
-		const npmCheckResults = await this.runWithConcurrency(npmCheckTasks, UPDATE_CHECK_CONCURRENCY);
-		const userNpmUpdates: NpmUpdateTarget[] = [];
-		const projectNpmUpdates: NpmUpdateTarget[] = [];
-		for (const result of npmCheckResults) {
-			if (!result.shouldUpdate) {
-				continue;
-			}
-			if (result.entry.scope === "user") {
-				userNpmUpdates.push(result.entry);
-			} else {
-				projectNpmUpdates.push(result.entry);
-			}
-		}
-
 		const tasks: Promise<void>[] = [];
-		if (userNpmUpdates.length > 0) {
-			tasks.push(this.updateNpmBatch(userNpmUpdates, "user"));
-		}
-		if (projectNpmUpdates.length > 0) {
-			tasks.push(this.updateNpmBatch(projectNpmUpdates, "project"));
-		}
 		if (gitCandidates.length > 0) {
 			const gitTasks = gitCandidates.map(
 				(entry) => async () =>
@@ -1080,46 +1054,6 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		await Promise.all(tasks);
-	}
-
-	private async shouldUpdateNpmSource(source: NpmSource, scope: InstalledSourceScope): Promise<boolean> {
-		const installedPath = this.getNpmInstallPath(source, scope);
-		const installedVersion = existsSync(installedPath) ? this.getInstalledNpmVersion(installedPath) : undefined;
-		if (!installedVersion) {
-			return true;
-		}
-
-		try {
-			const latestVersion = await this.getLatestNpmVersion(source.name);
-			return latestVersion !== installedVersion;
-		} catch {
-			// Preserve existing update behavior when version lookup fails.
-			return true;
-		}
-	}
-
-	private async updateNpmBatch(sources: NpmUpdateTarget[], scope: InstalledSourceScope): Promise<void> {
-		if (sources.length === 0) {
-			return;
-		}
-
-		const sourceLabel = sources.length === 1 ? sources[0].source : `${scope} npm packages`;
-		const message = sources.length === 1 ? `Updating ${sources[0].source}...` : `Updating ${scope} npm packages...`;
-		const specs = sources.map((entry) => `${entry.parsed.name}@latest`);
-
-		await this.withProgress("update", sourceLabel, message, async () => {
-			await this.installNpmBatch(specs, scope);
-		});
-	}
-
-	private async installNpmBatch(specs: string[], scope: InstalledSourceScope): Promise<void> {
-		if (scope === "user") {
-			await this.runNpmCommand(["install", "-g", ...specs]);
-			return;
-		}
-		const installRoot = this.getNpmInstallRoot(scope, false);
-		this.ensureNpmProject(installRoot);
-		await this.runNpmCommand(["install", ...specs, "--prefix", installRoot]);
 	}
 
 	async checkForAvailableUpdates(): Promise<PackageUpdate[]> {
@@ -1151,20 +1085,7 @@ export class DefaultPackageManager implements PackageManager {
 				}
 
 				if (parsed.type === "npm") {
-					const installedPath = this.getNpmInstallPath(parsed, entry.scope);
-					if (!existsSync(installedPath)) {
-						return undefined;
-					}
-					const hasUpdate = await this.npmHasAvailableUpdate(parsed, installedPath);
-					if (!hasUpdate) {
-						return undefined;
-					}
-					return {
-						source,
-						displayName: parsed.name,
-						type: "npm",
-						scope: entry.scope,
-					};
+					return undefined;
 				}
 
 				const installedPath = this.getGitInstallPath(parsed, entry.scope);
@@ -1208,6 +1129,10 @@ export class DefaultPackageManager implements PackageManager {
 				if (isOfflineModeEnabled()) {
 					return false;
 				}
+				if (scope !== "temporary") {
+					return false;
+				}
+				this.assertRegistryInstallAllowed(parsed);
 				if (!onMissing) {
 					await this.installParsedSource(parsed, scope);
 					return true;
@@ -1279,10 +1204,7 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private async installParsedSource(parsed: ParsedSource, scope: SourceScope): Promise<void> {
-		if (parsed.type === "npm") {
-			await this.installNpm(parsed, scope, scope === "temporary");
-			return;
-		}
+		this.assertRegistryInstallAllowed(parsed);
 		if (parsed.type === "git") {
 			await this.installGit(parsed, scope);
 			return;
@@ -1405,24 +1327,6 @@ export class DefaultPackageManager implements PackageManager {
 		return installedVersion === pinnedVersion;
 	}
 
-	private async npmHasAvailableUpdate(source: NpmSource, installedPath: string): Promise<boolean> {
-		if (isOfflineModeEnabled()) {
-			return false;
-		}
-
-		const installedVersion = this.getInstalledNpmVersion(installedPath);
-		if (!installedVersion) {
-			return false;
-		}
-
-		try {
-			const latestVersion = await this.getLatestNpmVersion(source.name);
-			return latestVersion !== installedVersion;
-		} catch {
-			return false;
-		}
-	}
-
 	private getInstalledNpmVersion(installedPath: string): string | undefined {
 		const packageJsonPath = join(installedPath, "package.json");
 		if (!existsSync(packageJsonPath)) return undefined;
@@ -1433,18 +1337,6 @@ export class DefaultPackageManager implements PackageManager {
 		} catch {
 			return undefined;
 		}
-	}
-
-	private async getLatestNpmVersion(packageName: string): Promise<string> {
-		const npmCommand = this.getNpmCommand();
-		const stdout = await this.runCommandCapture(
-			npmCommand.command,
-			[...npmCommand.args, "view", packageName, "version", "--json"],
-			{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
-		);
-		const raw = stdout.trim();
-		if (!raw) throw new Error("Empty response from npm view");
-		return JSON.parse(raw);
 	}
 
 	private async gitHasAvailableUpdate(installedPath: string): Promise<boolean> {
@@ -1667,32 +1559,46 @@ export class DefaultPackageManager implements PackageManager {
 		return { command, args };
 	}
 
+	private assertRegistryInstallAllowed(source: ParsedSource): void {
+		if (source.type !== "npm") {
+			return;
+		}
+		throw new Error(this.registryPackagesDisabledMessage(`npm:${source.spec}`));
+	}
+
+	private registryPackagesDisabledMessage(source: string): string {
+		return `Registry package installs are disabled in this fork: ${source}. Use a local path or git source instead.`;
+	}
+
+	private warnIfMutableGitSource(source: string, parsed: GitSource): void {
+		if (parsed.pinned) {
+			return;
+		}
+		console.warn(
+			`Warning: installing mutable git source ${source}. For reproducibility, prefer a tag or commit SHA.`,
+		);
+	}
+
+	private async runBunCommand(args: string[], options?: { cwd?: string }): Promise<void> {
+		await this.runCommand("bun", args, options);
+	}
+
 	private async runNpmCommand(args: string[], options?: { cwd?: string }): Promise<void> {
 		const npmCommand = this.getNpmCommand();
 		await this.runCommand(npmCommand.command, [...npmCommand.args, ...args], options);
 	}
 
-	private getGitDependencyInstallArgs(): string[] {
-		const configuredCommand = this.settingsManager.getNpmCommand();
-		if (configuredCommand && configuredCommand.length > 0) {
-			return ["install"];
+	private getGitDependencyInstallArgs(packageRoot: string): string[] {
+		const args = ["install", "--omit=dev", "--omit=peer", "--ignore-scripts"];
+		if (existsSync(join(packageRoot, "bun.lock"))) {
+			args.push("--frozen-lockfile");
 		}
-		return ["install", "--omit=dev"];
+		return args;
 	}
 
 	private runNpmCommandSync(args: string[]): string {
 		const npmCommand = this.getNpmCommand();
 		return this.runCommandSync(npmCommand.command, [...npmCommand.args, ...args]);
-	}
-
-	private async installNpm(source: NpmSource, scope: SourceScope, temporary: boolean): Promise<void> {
-		if (scope === "user" && !temporary) {
-			await this.runNpmCommand(["install", "-g", source.spec]);
-			return;
-		}
-		const installRoot = this.getNpmInstallRoot(scope, temporary);
-		this.ensureNpmProject(installRoot);
-		await this.runNpmCommand(["install", source.spec, "--prefix", installRoot]);
 	}
 
 	private async uninstallNpm(source: NpmSource, scope: SourceScope): Promise<void> {
@@ -1724,7 +1630,7 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		const packageJsonPath = join(targetDir, "package.json");
 		if (existsSync(packageJsonPath)) {
-			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+			await this.runBunCommand(this.getGitDependencyInstallArgs(targetDir), { cwd: targetDir });
 		}
 	}
 
@@ -1759,7 +1665,7 @@ export class DefaultPackageManager implements PackageManager {
 
 		const packageJsonPath = join(targetDir, "package.json");
 		if (existsSync(packageJsonPath)) {
-			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+			await this.runBunCommand(this.getGitDependencyInstallArgs(targetDir), { cwd: targetDir });
 		}
 	}
 
@@ -1802,18 +1708,6 @@ export class DefaultPackageManager implements PackageManager {
 				break;
 			}
 			current = dirname(current);
-		}
-	}
-
-	private ensureNpmProject(installRoot: string): void {
-		if (!existsSync(installRoot)) {
-			mkdirSync(installRoot, { recursive: true });
-		}
-		this.ensureGitIgnore(installRoot);
-		const packageJsonPath = join(installRoot, "package.json");
-		if (!existsSync(packageJsonPath)) {
-			const pkgJson = { name: "pi-extensions", private: true };
-			writeFileSync(packageJsonPath, JSON.stringify(pkgJson, null, 2), "utf-8");
 		}
 	}
 

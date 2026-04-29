@@ -65,7 +65,6 @@ Options:
   -l, --local    Install project-locally (.pi/settings.json)
 
 Examples:
-  ${APP_NAME} install npm:@foo/bar
   ${APP_NAME} install git:github.com/user/repo
   ${APP_NAME} install git:git@github.com:user/repo
   ${APP_NAME} install https://github.com/user/repo
@@ -85,8 +84,8 @@ Options:
   -l, --local    Remove from project settings (.pi/settings.json)
 
 Examples:
-  ${APP_NAME} remove npm:@foo/bar
-  ${APP_NAME} uninstall npm:@foo/bar
+  ${APP_NAME} remove git:github.com/user/repo
+  ${APP_NAME} uninstall ./local/path
 `);
 			return;
 

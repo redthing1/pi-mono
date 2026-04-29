@@ -139,7 +139,7 @@ When a provider requests a retry delay longer than `retry.provider.maxRetryDelay
 |---------|------|---------|-------------|
 | `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows) |
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
-| `npmCommand` | string[] | - | Command argv used for npm package lookup/install operations (e.g., `["mise", "exec", "node@20", "--", "npm"]`) |
+| `npmCommand` | string[] | - | Legacy command argv used for existing npm package lookup/removal operations |
 
 ```json
 {
@@ -147,7 +147,7 @@ When a provider requests a retry delay longer than `retry.provider.maxRetryDelay
 }
 ```
 
-`npmCommand` is used for all npm package-manager operations, including `npm root -g`, installs, uninstalls, and dependency installs inside git packages. Use argv-style entries exactly as the process should be launched. When `npmCommand` is configured, git package dependency installs use plain `install` to avoid npm-specific flags in wrappers or alternate package managers.
+Registry package installs are disabled in this fork. `npmCommand` is only used for legacy npm package lookup/removal paths. Git package dependencies are installed with Bun.
 
 ### Sessions
 

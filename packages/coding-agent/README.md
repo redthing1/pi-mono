@@ -365,13 +365,11 @@ Place in `~/.pi/agent/themes/`, `.pi/themes/`, or a [pi package](#pi-packages) t
 
 ### Pi Packages
 
-Bundle and share extensions, skills, prompts, and themes via npm or git. Find packages on [npmjs.com](https://www.npmjs.com/search?q=keywords%3Api-package) or [Discord](https://discord.com/channels/1456806362351669492/1457744485428629628).
+Bundle and share extensions, skills, prompts, and themes via git or local paths.
 
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install npm:@foo/pi-tools
-pi install npm:@foo/pi-tools@1.2.3      # pinned version
 pi install git:github.com/user/repo
 pi install git:github.com/user/repo@v1  # tag or commit
 pi install git:git@github.com:user/repo
@@ -380,18 +378,18 @@ pi install https://github.com/user/repo
 pi install https://github.com/user/repo@v1      # tag or commit
 pi install ssh://git@github.com/user/repo
 pi install ssh://git@github.com/user/repo@v1    # tag or commit
-pi remove npm:@foo/pi-tools
-pi uninstall npm:@foo/pi-tools          # alias for remove
+pi remove git:github.com/user/repo
+pi uninstall git:github.com/user/repo   # alias for remove
 pi list
 pi update                               # update pi and packages (skips pinned packages)
 pi update --extensions                  # update packages only
 pi update --self                        # update pi only
 pi update --self --force                # reinstall pi even if current
-pi update npm:@foo/pi-tools             # update one package
+pi update git:github.com/user/repo      # update one package
 pi config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Packages install to `~/.pi/agent/git/` (git) or global npm. Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Git packages install to `~/.pi/agent/git/`; use `-l` for project-local installs under `.pi/git/`. If a git package has a `package.json`, pi installs runtime dependencies with `bun install --omit=dev --omit=peer --ignore-scripts`, using `--frozen-lockfile` when `bun.lock` is present.
 
 Create a package by adding a `pi` key to `package.json`:
 
