@@ -66,9 +66,18 @@ export class CustomEditor extends Editor {
 			// Fall through to editor handling for delete-char-forward when not empty
 		}
 
+		const followUpHandler = this.actionHandlers.get("app.message.followUp");
+		if (followUpHandler && this.keybindings.matches(data, "app.message.followUp")) {
+			if (!this.isShowingAutocomplete()) {
+				followUpHandler();
+				return;
+			}
+		}
+
 		// Check all other app actions
 		for (const [action, handler] of this.actionHandlers) {
-			if (action !== "app.interrupt" && action !== "app.exit" && this.keybindings.matches(data, action)) {
+			if (action === "app.interrupt" || action === "app.exit" || action === "app.message.followUp") continue;
+			if (this.keybindings.matches(data, action)) {
 				handler();
 				return;
 			}
