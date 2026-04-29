@@ -54,6 +54,7 @@ export interface SettingsConfig {
 	quietStartup: boolean;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
+	compactExploration: boolean;
 	warnings: WarningSettings;
 }
 
@@ -81,6 +82,7 @@ export interface SettingsCallbacks {
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
+	onCompactExplorationChange: (enabled: boolean) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onCancel: () => void;
 }
@@ -445,6 +447,16 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Compact exploration toggle (insert after terminal-progress)
+		const terminalProgressIndex = items.findIndex((item) => item.id === "terminal-progress");
+		items.splice(terminalProgressIndex + 1, 0, {
+			id: "compact-exploration",
+			label: "Compact exploration",
+			description: "Compact read/search/list exploration output in interactive mode",
+			currentValue: config.compactExploration ? "true" : "false",
+			values: ["true", "false"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -515,6 +527,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "compact-exploration":
+						callbacks.onCompactExplorationChange(newValue === "true");
 						break;
 				}
 			},

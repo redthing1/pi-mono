@@ -3,6 +3,7 @@
  * not a stale captured width. Regression test for #2569.
  */
 import { visibleWidth } from "@mariozechner/pi-tui";
+import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
@@ -76,5 +77,40 @@ describe("BashExecutionComponent width handling (#2569)", () => {
 			const w = visibleWidth(lines60[i]);
 			expect(w, `Line ${i} visibleWidth=${w} > 60`).toBeLessThanOrEqual(60);
 		}
+	});
+
+	it("compacts read-only rg exploration output when enabled", () => {
+		const { stub } = createTuiStub(120);
+		const component = new BashExecutionComponent(
+			'cd /repo && rg -il "compaction" packages/ | head -30',
+			stub,
+			false,
+			{ compactExploration: true },
+		);
+		component.appendOutput(
+			"packages/coding-agent/docs/compaction.md\npackages/coding-agent/src/core/agent-session.ts\n",
+		);
+		component.setComplete(0, false);
+
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("Explored");
+		expect(rendered).toContain("Search /compaction/ in packages");
+		expect(rendered).toContain("compaction.md");
+		expect(rendered).toContain("agent-session.ts");
+		expect(rendered).not.toContain("$ cd /repo");
+	});
+
+	it("shows full bash exploration details when expanded", () => {
+		const { stub } = createTuiStub(120);
+		const component = new BashExecutionComponent('rg -il "compaction" packages/', stub, false, {
+			compactExploration: true,
+		});
+		component.appendOutput("packages/coding-agent/docs/compaction.md\n");
+		component.setComplete(0, false);
+		component.setExpanded(true);
+
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain('$ rg -il "compaction" packages/');
+		expect(rendered).toContain("packages/coding-agent/docs/compaction.md");
 	});
 });

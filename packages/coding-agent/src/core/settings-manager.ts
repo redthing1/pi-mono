@@ -34,6 +34,7 @@ export interface TerminalSettings {
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	compactExploration?: boolean; // default: true (compact read/search/list exploration output in interactive mode)
 }
 
 export interface ImageSettings {
@@ -960,6 +961,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.showTerminalProgress = enabled;
 		this.markModified("terminal", "showTerminalProgress");
+		this.save();
+	}
+
+	getCompactExploration(): boolean {
+		return this.settings.terminal?.compactExploration ?? true;
+	}
+
+	setCompactExploration(enabled: boolean): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.compactExploration = enabled;
+		this.markModified("terminal", "compactExploration");
 		this.save();
 	}
 

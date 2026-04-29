@@ -290,6 +290,28 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("terminal.compactExploration", () => {
+		it("defaults to enabled", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getCompactExploration()).toBe(true);
+		});
+
+		it("persists explicit compact exploration changes under terminal settings", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ terminal: { showImages: false } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setCompactExploration(false);
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(savedSettings.terminal).toEqual({ showImages: false, compactExploration: false });
+			expect(manager.getCompactExploration()).toBe(false);
+		});
+	});
+
 	describe("getSessionDir", () => {
 		it("should return undefined when not set", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));

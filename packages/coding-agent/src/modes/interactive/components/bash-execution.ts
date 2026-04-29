@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@mariozechner/pi-tui";
+import { Container, Loader, Spacer, Text, type TUI, truncateToWidth } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import {
 	DEFAULT_MAX_BYTES,
@@ -12,11 +12,16 @@ import {
 } from "../../../core/tools/truncate.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
+import { formatBashExplorationSummary } from "./exploration-summary.js";
 import { keyHint, keyText } from "./keybinding-hints.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
 
 // Preview line limit when not expanded (matches tool execution behavior)
 const PREVIEW_LINES = 20;
+
+export interface BashExecutionOptions {
+	compactExploration?: boolean;
+}
 
 export class BashExecutionComponent extends Container {
 	private command: string;
@@ -28,10 +33,12 @@ export class BashExecutionComponent extends Container {
 	private fullOutputPath?: string;
 	private expanded = false;
 	private contentContainer: Container;
+	private compactExploration: boolean;
 
-	constructor(command: string, ui: TUI, excludeFromContext = false) {
+	constructor(command: string, ui: TUI, excludeFromContext = false, options: BashExecutionOptions = {}) {
 		super();
 		this.command = command;
+		this.compactExploration = options.compactExploration ?? false;
 
 		// Use dim border for excluded-from-context commands (!! prefix)
 		const colorKey = excludeFromContext ? "dim" : "bashMode";
@@ -72,9 +79,31 @@ export class BashExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setCompactExploration(compact: boolean): void {
+		this.compactExploration = compact;
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
+	}
+
+	override render(width: number): string[] {
+		if (this.compactExploration && !this.expanded) {
+			const summary = formatBashExplorationSummary({
+				command: this.command,
+				output: this.getOutput(),
+				status: this.status,
+				exitCode: this.exitCode,
+			});
+			if (summary) {
+				return ["", `• ${theme.fg("toolTitle", theme.bold(summary.label))}`, `  └ ${summary.row}`].map((line) =>
+					truncateToWidth(line, width),
+				);
+			}
+		}
+		return super.render(width);
 	}
 
 	appendOutput(chunk: string): void {

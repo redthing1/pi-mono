@@ -10,6 +10,20 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 }
 
+export interface ToolExecutionResultSnapshot {
+	content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+	isError: boolean;
+	details?: unknown;
+}
+
+export interface ToolExecutionSnapshot {
+	toolName: string;
+	toolCallId: string;
+	args: unknown;
+	result?: ToolExecutionResultSnapshot;
+	isPartial: boolean;
+}
+
 export class ToolExecutionComponent extends Container {
 	private contentBox: Box;
 	private contentText: Text;
@@ -211,6 +225,16 @@ export class ToolExecutionComponent extends Container {
 	setImageWidthCells(width: number): void {
 		this.imageWidthCells = Math.max(1, Math.floor(width));
 		this.updateDisplay();
+	}
+
+	getPresentationSnapshot(): ToolExecutionSnapshot {
+		return {
+			toolName: this.toolName,
+			toolCallId: this.toolCallId,
+			args: this.args,
+			result: this.result,
+			isPartial: this.isPartial,
+		};
 	}
 
 	override invalidate(): void {

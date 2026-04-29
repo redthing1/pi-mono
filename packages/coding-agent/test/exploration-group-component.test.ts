@@ -1,0 +1,238 @@
+import type { TUI } from "@mariozechner/pi-tui";
+import stripAnsi from "strip-ansi";
+import { beforeAll, describe, expect, test } from "vitest";
+import {
+	ExplorationGroupComponent,
+	isExplorationToolSnapshot,
+} from "../src/modes/interactive/components/exploration-group.js";
+import { formatBashExplorationSummary } from "../src/modes/interactive/components/exploration-summary.js";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
+import { initTheme } from "../src/modes/interactive/theme/theme.js";
+
+function createFakeTui(): TUI {
+	return {
+		requestRender: () => {},
+	} as unknown as TUI;
+}
+
+function createTool(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
+	return new ToolExecutionComponent(toolName, toolCallId, args, {}, undefined, createFakeTui(), process.cwd());
+}
+
+function completeTool(component: ToolExecutionComponent, text: string, details?: unknown): void {
+	component.updateResult({ content: [{ type: "text", text }], details, isError: false });
+}
+
+function failTool(component: ToolExecutionComponent, text: string): void {
+	component.updateResult({ content: [{ type: "text", text }], isError: true });
+}
+
+function renderGroup(group: ExplorationGroupComponent, width = 120): string {
+	return stripAnsi(group.render(width).join("\n"));
+}
+
+describe("ExplorationGroupComponent", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	test("renders a compact read summary without the file body when collapsed", () => {
+		const group = new ExplorationGroupComponent();
+		const read = createTool("read", "read-1", { path: "src/read.ts" });
+		completeTool(read, "line one\nline two");
+
+		group.addTool(read);
+
+		const rendered = renderGroup(group);
+		expect(rendered).toContain("Explored");
+		expect(rendered).toContain("Read read.ts");
+		expect(rendered).not.toContain("line one");
+		expect(rendered).not.toContain("line two");
+	});
+
+	test("reveals the existing detailed tool output when expanded", () => {
+		const group = new ExplorationGroupComponent();
+		const read = createTool("read", "read-2", { path: "src/read.ts" });
+		completeTool(read, "line one\nline two");
+		group.addTool(read);
+
+		group.setExpanded(true);
+
+		const rendered = renderGroup(group);
+		expect(rendered).toContain("Explored");
+		expect(rendered).toContain("read src/read.ts");
+		expect(rendered).toContain("line one");
+		expect(rendered).toContain("line two");
+	});
+
+	test("coalesces adjacent reads into one compact row while preserving line ranges", () => {
+		const group = new ExplorationGroupComponent();
+		const first = createTool("read", "read-3", { path: "src/a.ts", offset: 10, limit: 3 });
+		const second = createTool("read", "read-4", { path: "src/b.ts" });
+		const duplicate = createTool("read", "read-5", { path: "src/b.ts" });
+		completeTool(first, "a");
+		completeTool(second, "b");
+		completeTool(duplicate, "b again");
+
+		group.addTool(first);
+		group.addTool(second);
+		group.addTool(duplicate);
+
+		const rendered = renderGroup(group);
+		const readRows = rendered.split("\n").filter((line) => line.includes("Read "));
+		expect(readRows).toHaveLength(1);
+		expect(readRows[0]).toContain("a.ts:10-12");
+		expect(readRows[0]).toContain("b.ts");
+		expect(readRows[0].match(/\bb\.ts/g)).toHaveLength(1);
+	});
+
+	test("preserves mixed exploration order while coalescing only adjacent reads", () => {
+		const group = new ExplorationGroupComponent();
+		const grep = createTool("grep", "grep-1", { pattern: "ToolExecutionComponent", path: "packages/coding-agent" });
+		const firstRead = createTool("read", "read-6", { path: "packages/coding-agent/src/a.ts" });
+		const secondRead = createTool("read", "read-7", { path: "packages/coding-agent/src/b.ts" });
+		const find = createTool("find", "find-1", { pattern: "**/*.test.ts", path: "packages/coding-agent/test" });
+		const ls = createTool("ls", "ls-1", { path: "packages/coding-agent/src/core/tools" });
+		completeTool(grep, "src/a.ts:1:ToolExecutionComponent");
+		completeTool(firstRead, "a");
+		completeTool(secondRead, "b");
+		completeTool(find, "exploration-group-component.test.ts");
+		completeTool(ls, "read.ts\ngrep.ts");
+
+		group.addTool(grep);
+		group.addTool(firstRead);
+		group.addTool(secondRead);
+		group.addTool(find);
+		group.addTool(ls);
+
+		const rendered = renderGroup(group);
+		const searchIndex = rendered.indexOf("Search /ToolExecutionComponent/");
+		const readIndex = rendered.indexOf("Read a.ts");
+		const findIndex = rendered.indexOf("Find **/*.test.ts");
+		const listIndex = rendered.indexOf("List tools");
+		expect(searchIndex).toBeGreaterThanOrEqual(0);
+		expect(readIndex).toBeGreaterThan(searchIndex);
+		expect(findIndex).toBeGreaterThan(readIndex);
+		expect(listIndex).toBeGreaterThan(findIndex);
+		expect(rendered).not.toContain("src/a.ts:1:ToolExecutionComponent");
+		expect(rendered).not.toContain("read.ts\ngrep.ts");
+	});
+
+	test("summarizes read-only bash exploration commands", () => {
+		const group = new ExplorationGroupComponent();
+		const bash = createTool("bash", "bash-1", {
+			command: 'cd /repo && rg -il "compaction" packages/ | head -30',
+		});
+		completeTool(bash, "packages/coding-agent/docs/compaction.md\npackages/coding-agent/src/core/agent-session.ts\n");
+
+		group.addTool(bash);
+
+		const rendered = renderGroup(group);
+		expect(rendered).toContain("Explored");
+		expect(rendered).toContain("Search /compaction/ in packages");
+		expect(rendered).toContain("compaction.md");
+		expect(rendered).toContain("agent-session.ts");
+		expect(rendered).not.toContain("$ cd /repo");
+	});
+
+	test("does not classify mutating bash commands as exploration", () => {
+		const bash = createTool("bash", "bash-2", { command: "rm -rf tmp" });
+
+		expect(isExplorationToolSnapshot(bash.getPresentationSnapshot())).toBe(false);
+	});
+
+	test("formats common shell exploration tools learned from Codex", () => {
+		const cases = [
+			{ command: "rg --files packages/coding-agent/src | head -n 5", expected: "List src" },
+			{ command: 'fdfind "*.ts" packages/coding-agent/src', expected: "Find *.ts in src" },
+			{ command: "git grep TODO packages/coding-agent", expected: "Search /TODO/ in coding-agent" },
+			{ command: "git ls-files packages/coding-agent/src", expected: "List src" },
+			{ command: "egrep -R TODO packages/coding-agent", expected: "Search /TODO/ in coding-agent" },
+			{ command: "ag TODO packages/coding-agent", expected: "Search /TODO/ in coding-agent" },
+			{ command: "eza --color=always packages/coding-agent/src", expected: "List src" },
+			{ command: "tree -L 2 packages/coding-agent/src", expected: "List src" },
+			{ command: "cat packages/coding-agent/docs/settings.md", expected: "Read settings.md" },
+			{ command: "sed -n '1,20p' packages/coding-agent/docs/settings.md", expected: "Read settings.md" },
+		];
+
+		for (const { command, expected } of cases) {
+			const summary = formatBashExplorationSummary({ command, output: "", status: "complete" });
+			expect(stripAnsi(summary?.row ?? ""), command).toContain(expected);
+		}
+	});
+
+	test("keeps ambiguous or mutating shell pipelines detailed", () => {
+		const mutating = formatBashExplorationSummary({
+			command: "rg TODO packages/coding-agent | xargs perl -pi -e s/TODO/DONE/g",
+			output: "",
+			status: "complete",
+		});
+		const unknown = formatBashExplorationSummary({
+			command: "node scripts/list-files.js",
+			output: "",
+			status: "complete",
+		});
+		const sedWithoutFile = formatBashExplorationSummary({
+			command: "sed -n '1,20p'",
+			output: "",
+			status: "complete",
+		});
+
+		expect(mutating).toBeUndefined();
+		expect(unknown).toBeUndefined();
+		expect(sedWithoutFile).toBeUndefined();
+	});
+
+	test("shows exploring while any nested tool is still pending", () => {
+		const group = new ExplorationGroupComponent();
+		const pending = createTool("grep", "grep-2", { pattern: "needle", path: "." });
+
+		group.addTool(pending);
+
+		const rendered = renderGroup(group);
+		expect(rendered).toContain("Exploring");
+		expect(rendered).toContain("Search /needle/");
+	});
+
+	test("shows compact failure state and reveals error details when expanded", () => {
+		const group = new ExplorationGroupComponent();
+		const read = createTool("read", "read-8", { path: "missing.ts" });
+		failTool(read, "ENOENT: missing.ts");
+		group.addTool(read);
+
+		const collapsed = renderGroup(group);
+		expect(collapsed).toContain("Explored");
+		expect(collapsed).toContain("Read missing.ts failed");
+		expect(collapsed).not.toContain("ENOENT");
+
+		group.setExpanded(true);
+
+		const expanded = renderGroup(group);
+		expect(expanded).toContain("Read missing.ts failed");
+		expect(expanded).toContain("ENOENT: missing.ts");
+	});
+
+	test("propagates image settings to nested tool components", () => {
+		const group = new ExplorationGroupComponent();
+		const read = createTool("read", "read-9", { path: "image.png" });
+		let showImages: boolean | undefined;
+		let imageWidthCells: number | undefined;
+		const originalSetShowImages = read.setShowImages.bind(read);
+		const originalSetImageWidthCells = read.setImageWidthCells.bind(read);
+		read.setShowImages = (show) => {
+			showImages = show;
+			originalSetShowImages(show);
+		};
+		read.setImageWidthCells = (width) => {
+			imageWidthCells = width;
+			originalSetImageWidthCells(width);
+		};
+		group.addTool(read);
+
+		group.setShowImages(false);
+		group.setImageWidthCells(24);
+
+		expect(showImages).toBe(false);
+		expect(imageWidthCells).toBe(24);
+	});
+});
