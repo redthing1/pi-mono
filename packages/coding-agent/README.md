@@ -69,7 +69,8 @@ I regularly publish my own `pi-mono` work sessions here:
 ## Quick Start
 
 ```bash
-npm install -g @mariozechner/pi-coding-agent
+# From the repository root
+bun run install:local-pi
 ```
 
 Authenticate with an API key:

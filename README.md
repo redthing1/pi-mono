@@ -59,6 +59,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 
 ```bash
 bun install          # Install all dependencies
+bun run install:local-pi  # Install pi from this checkout
 bun run build        # Build all packages
 bun run check        # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)

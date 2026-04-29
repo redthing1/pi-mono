@@ -43,6 +43,25 @@ Important risks include:
 - Build and run from reproducible inputs where possible.
 - Self-update paths should not replace reviewed source with unreviewed registry output.
 
+## Source Checkout Installation
+
+The preferred trusted install path is a reviewed source checkout:
+
+```bash
+bun run install:local-pi
+```
+
+The script performs a frozen Bun install, builds the Pi workspaces, registers the local coding-agent package with `bun link`, and installs the global `pi` binary as `@redthing1/pi-coding-agent` from that local link. It avoids a registry install for Pi.
+
+For a GitHub-hosted fork, clone the repository, check out a reviewed full commit SHA, then run the same command from the repository root:
+
+```bash
+git clone <fork-url> pi-mono
+cd pi-mono
+git checkout <full-commit-sha>
+bun run install:local-pi
+```
+
 ## Package And Extension Principles
 
 Pi packages and extensions are executable code. Installing one should be treated like adding a dependency to the harness itself.

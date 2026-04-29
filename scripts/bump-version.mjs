@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ const bumpTypes = new Set(["major", "minor", "patch"]);
 const semverPattern = /^\d+\.\d+\.\d+$/;
 
 if (!target || (!bumpTypes.has(target) && !semverPattern.test(target))) {
-	console.error("Usage: node scripts/bump-version.mjs <major|minor|patch|x.y.z>");
+	console.error("Usage: bun scripts/bump-version.mjs <major|minor|patch|x.y.z>");
 	process.exit(1);
 }
 

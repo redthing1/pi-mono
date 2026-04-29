@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Release script for pi-mono
  *
  * Usage:
- *   node scripts/release.mjs <major|minor|patch>
- *   node scripts/release.mjs <x.y.z>
+ *   bun scripts/release.mjs <major|minor|patch>
+ *   bun scripts/release.mjs <x.y.z>
  *
  * Steps:
  * 1. Check for uncommitted changes
@@ -25,7 +25,7 @@ const BUMP_TYPES = new Set(["major", "minor", "patch"]);
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
 if (!RELEASE_TARGET || (!BUMP_TYPES.has(RELEASE_TARGET) && !SEMVER_RE.test(RELEASE_TARGET))) {
-	console.error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z>");
+	console.error("Usage: bun scripts/release.mjs <major|minor|patch|x.y.z>");
 	process.exit(1);
 }
 
@@ -90,7 +90,7 @@ function bumpOrSetVersion(target) {
 	}
 
 	console.log(`Setting explicit version (${target})...`);
-	run(`node scripts/bump-version.mjs ${target} && node scripts/sync-versions.js && bun install --lockfile-only`);
+	run(`bun scripts/bump-version.mjs ${target} && bun scripts/sync-versions.js && bun install --lockfile-only`);
 	return getVersion();
 }
 
