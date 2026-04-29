@@ -438,6 +438,68 @@ export class InteractiveMode {
 		return description ? `[${sourceTag}] ${description}` : `[${sourceTag}]`;
 	}
 
+	private extractSkillMentionPrefix(textBeforeCursor: string): string | undefined {
+		const match = textBeforeCursor.match(/(?:^|[ \t])\$([a-z][a-z0-9-]*)?$/);
+		return match ? (match[1] ?? "") : undefined;
+	}
+
+	private createSkillMentionAutocompleteProvider(current: AutocompleteProvider): AutocompleteProvider {
+		const skills = this.session.resourceLoader.getSkills().skills;
+		if (skills.length === 0) {
+			return current;
+		}
+
+		return {
+			getSuggestions: async (lines, cursorLine, cursorCol, options) => {
+				const currentLine = lines[cursorLine] ?? "";
+				const textBeforeCursor = currentLine.slice(0, cursorCol);
+				const prefix = this.extractSkillMentionPrefix(textBeforeCursor);
+				if (prefix === undefined) {
+					return current.getSuggestions(lines, cursorLine, cursorCol, options);
+				}
+
+				const items = fuzzyFilter(skills, prefix, (skill) => `${skill.name} ${skill.description}`)
+					.slice(0, 20)
+					.map((skill) => ({
+						value: skill.name,
+						label: `$${skill.name}`,
+						description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
+					}));
+				if (items.length === 0) {
+					return current.getSuggestions(lines, cursorLine, cursorCol, options);
+				}
+
+				return {
+					items,
+					prefix: `$${prefix}`,
+				};
+			},
+
+			applyCompletion: (lines, cursorLine, cursorCol, item, prefix) => {
+				if (!prefix.startsWith("$")) {
+					return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+				}
+
+				const currentLine = lines[cursorLine] ?? "";
+				const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+				const afterCursor = currentLine.slice(cursorCol);
+				const value = `$${item.value}`;
+				const suffix = afterCursor.startsWith(" ") || afterCursor.startsWith("\t") ? "" : " ";
+				const newLines = [...lines];
+				newLines[cursorLine] = beforePrefix + value + suffix + afterCursor;
+
+				return {
+					lines: newLines,
+					cursorLine,
+					cursorCol: beforePrefix.length + value.length + suffix.length,
+				};
+			},
+
+			shouldTriggerFileCompletion: (lines, cursorLine, cursorCol) =>
+				current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true,
+		};
+	}
+
 	private getBuiltInCommandConflictDiagnostics(extensionRunner: ExtensionRunner): ResourceDiagnostic[] {
 		const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
 		return extensionRunner
@@ -523,11 +585,12 @@ export class InteractiveMode {
 			}
 		}
 
-		return new CombinedAutocompleteProvider(
+		const provider = new CombinedAutocompleteProvider(
 			[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList],
 			this.sessionManager.getCwd(),
 			this.fdPath,
 		);
+		return this.createSkillMentionAutocompleteProvider(provider);
 	}
 
 	private setupAutocompleteProvider(): void {

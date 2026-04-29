@@ -151,6 +151,7 @@ The editor can be temporarily replaced by other UI, like built-in `/settings` or
 | Feature | How |
 |---------|-----|
 | File reference | Type `@` to fuzzy-search project files |
+| Skill mention | Type `$` to fuzzy-search skills inline |
 | Path completion | Tab to complete paths |
 | Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal) |
 | Images | Ctrl+V to paste (Alt+V on Windows), or drag onto terminal |
@@ -160,7 +161,7 @@ Standard editing keybindings for delete word, undo, etc. See [docs/keybindings.m
 
 ### Commands
 
-Type `/` in the editor to trigger commands. [Extensions](#extensions) can register custom commands, [skills](#skills) are available as `/skill:name`, and [prompt templates](#prompt-templates) expand via `/templatename`.
+Type `/` in the editor to trigger commands. [Extensions](#extensions) can register custom commands, [skills](#skills) are available inline as `$skill-name` or as `/skill:name`, and [prompt templates](#prompt-templates) expand via `/templatename`.
 
 | Command | Description |
 |---------|-------------|

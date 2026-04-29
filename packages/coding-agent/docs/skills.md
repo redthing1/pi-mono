@@ -72,7 +72,15 @@ This is progressive disclosure: only descriptions are always in context, full in
 
 ## Skill Commands
 
-Skills register as `/skill:name` commands:
+Type `$` in interactive mode to pick one or more skills inline:
+
+```text
+Review this with $code-review and $security-audit
+```
+
+Inline mentions load the skill instructions before the prompt and leave the prompt text intact.
+
+Skills also register as `/skill:name` commands:
 
 ```bash
 /skill:brave-search           # Load and execute the skill

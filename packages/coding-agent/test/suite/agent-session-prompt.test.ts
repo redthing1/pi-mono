@@ -190,6 +190,58 @@ describe("AgentSession prompt characterization", () => {
 		expect(expandedPrompt).toContain("explain this");
 	});
 
+	it("expands inline skill mentions before sending the prompt", async () => {
+		const tempDir = join(tmpdir(), `pi-skills-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		tempDirs.push(tempDir);
+		const alphaPath = join(tempDir, "alpha.md");
+		const betaPath = join(tempDir, "beta.md");
+		writeFileSync(alphaPath, "# Alpha Skill\n\nUse alpha instructions.");
+		writeFileSync(betaPath, "# Beta Skill\n\nUse beta instructions.");
+
+		const makeSkill = (name: string, description: string, filePath: string) => ({
+			name,
+			description,
+			filePath,
+			disableModelInvocation: false,
+			baseDir: tempDir,
+			sourceInfo: createSyntheticSourceInfo(filePath, {
+				source: "local",
+				scope: "project",
+				origin: "top-level",
+				baseDir: tempDir,
+			}),
+		});
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getSkills: () => ({
+				skills: [makeSkill("alpha", "Alpha skill", alphaPath), makeSkill("beta", "Beta skill", betaPath)],
+				diagnostics: [],
+			}),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		let expandedPrompt = "";
+
+		harness.setResponses([
+			(context) => {
+				const user = context.messages.find((message) => message.role === "user");
+				expandedPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await harness.session.prompt("Use $alpha and $beta. Keep $HOME and $5 literal. Mention $alpha once.");
+
+		expect(expandedPrompt.match(/<skill name="alpha"/g)).toHaveLength(1);
+		expect(expandedPrompt.match(/<skill name="beta"/g)).toHaveLength(1);
+		expect(expandedPrompt).toContain("Use alpha instructions.");
+		expect(expandedPrompt).toContain("Use beta instructions.");
+		expect(expandedPrompt).toContain("Use $alpha and $beta.");
+		expect(expandedPrompt).toContain("$HOME");
+		expect(expandedPrompt).toContain("$5");
+	});
+
 	it("expands prompt templates before sending the prompt", async () => {
 		const template: PromptTemplate = {
 			name: "review",
