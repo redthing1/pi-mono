@@ -128,6 +128,8 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 |--------|---------|-------------|
 | `app.tree.foldOrUp` | `ctrl+left`, `alt+left` | Fold current branch segment, or jump to the previous segment start |
 | `app.tree.unfoldOrDown` | `ctrl+right`, `alt+right` | Unfold current branch segment, or jump to the next segment start or branch end |
+| `app.tree.jumpSameTypeUp` | `shift+up` | Jump to the previous same-type tree entry in the current list |
+| `app.tree.jumpSameTypeDown` | `shift+down` | Jump to the next same-type tree entry in the current list |
 | `app.tree.editLabel` | `shift+l` | Edit the label on the selected tree node |
 | `app.tree.toggleLabelTimestamp` | `shift+t` | Toggle label timestamps in the tree |
 | `app.tree.filter.default` | `ctrl+d` | Set tree filter to default view |

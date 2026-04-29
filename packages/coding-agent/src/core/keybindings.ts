@@ -32,6 +32,8 @@ export interface AppKeybindings {
 	"app.session.resume": true;
 	"app.tree.foldOrUp": true;
 	"app.tree.unfoldOrDown": true;
+	"app.tree.jumpSameTypeUp": true;
+	"app.tree.jumpSameTypeDown": true;
 	"app.tree.editLabel": true;
 	"app.tree.toggleLabelTimestamp": true;
 	"app.session.togglePath": true;
@@ -118,6 +120,14 @@ export const KEYBINDINGS = {
 	"app.tree.unfoldOrDown": {
 		defaultKeys: ["ctrl+right", "alt+right"],
 		description: "Unfold tree branch or move down",
+	},
+	"app.tree.jumpSameTypeUp": {
+		defaultKeys: "shift+up",
+		description: "Jump to previous tree entry of the same type",
+	},
+	"app.tree.jumpSameTypeDown": {
+		defaultKeys: "shift+down",
+		description: "Jump to next tree entry of the same type",
 	},
 	"app.tree.editLabel": {
 		defaultKeys: "shift+l",

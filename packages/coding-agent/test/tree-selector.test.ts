@@ -84,6 +84,23 @@ function toolCallOnlyAssistant(id: string, parentId: string | null): SessionMess
 	};
 }
 
+function toolResultMessage(id: string, parentId: string | null, toolName: string): SessionMessageEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: new Date().toISOString(),
+		message: {
+			role: "toolResult",
+			toolCallId: `tc-${id}`,
+			toolName,
+			content: [{ type: "text", text: "ok" }],
+			isError: false,
+			timestamp: Date.now(),
+		},
+	};
+}
+
 // Helper to create a model_change entry
 function modelChange(id: string, parentId: string | null): ModelChangeEntry {
 	return {
@@ -349,6 +366,8 @@ describe("TreeSelectorComponent", () => {
 		// Key escape sequences
 		const UP = "\x1b[A";
 		const DOWN = "\x1b[B";
+		const SHIFT_UP = "\x1b[1;2A";
+		const SHIFT_DOWN = "\x1b[1;2B";
 		const CTRL_LEFT = "\x1b[1;5D";
 		const CTRL_RIGHT = "\x1b[1;5C";
 		const ALT_LEFT = "\x1b[1;3D";
@@ -388,6 +407,62 @@ describe("TreeSelectorComponent", () => {
 			];
 			return buildTree(entries);
 		}
+
+		test("shift+up/down jump to the nearest visible entry with the same message role", () => {
+			const entries: SessionEntry[] = [
+				userMessage("user-1", null, "first"),
+				assistantMessage("asst-1", "user-1", "response"),
+				toolResultMessage("tool-1", "asst-1", "read"),
+				userMessage("user-2", "tool-1", "second"),
+				assistantMessage("asst-2", "user-2", "response"),
+				toolResultMessage("tool-2", "asst-2", "bash"),
+				userMessage("user-3", "tool-2", "third"),
+			];
+			const tree = buildTree(entries);
+			const selector = new TreeSelectorComponent(
+				tree,
+				"user-3",
+				24,
+				() => {},
+				() => {},
+			);
+			const list = selector.getTreeList();
+
+			expect(list.getSelectedNode()?.entry.id).toBe("user-3");
+
+			selector.handleInput(SHIFT_UP); // user-3 -> user-2
+			expect(list.getSelectedNode()?.entry.id).toBe("user-2");
+
+			selector.handleInput(SHIFT_UP); // user-2 -> user-1
+			expect(list.getSelectedNode()?.entry.id).toBe("user-1");
+
+			selector.handleInput(SHIFT_UP); // no previous user message
+			expect(list.getSelectedNode()?.entry.id).toBe("user-1");
+
+			selector.handleInput(SHIFT_DOWN); // user-1 -> user-2
+			expect(list.getSelectedNode()?.entry.id).toBe("user-2");
+
+			selector.handleInput(DOWN); // user-2 -> asst-2
+			expect(list.getSelectedNode()?.entry.id).toBe("asst-2");
+
+			selector.handleInput(SHIFT_UP); // asst-2 -> asst-1
+			expect(list.getSelectedNode()?.entry.id).toBe("asst-1");
+
+			selector.handleInput(SHIFT_DOWN); // asst-1 -> asst-2
+			expect(list.getSelectedNode()?.entry.id).toBe("asst-2");
+
+			selector.handleInput(DOWN); // asst-2 -> tool-2
+			expect(list.getSelectedNode()?.entry.id).toBe("tool-2");
+
+			selector.handleInput(SHIFT_UP); // tool-2 -> tool-1
+			expect(list.getSelectedNode()?.entry.id).toBe("tool-1");
+
+			selector.handleInput(SHIFT_UP); // no previous tool result
+			expect(list.getSelectedNode()?.entry.id).toBe("tool-1");
+
+			selector.handleInput(SHIFT_DOWN); // tool-1 -> tool-2
+			expect(list.getSelectedNode()?.entry.id).toBe("tool-2");
+		});
 
 		test("ctrl+right unfolds a folded node, then does segment jump when unfolded", () => {
 			const tree = buildBranchingTree();

@@ -567,6 +567,32 @@ class TreeList implements Component {
 		return this.filteredNodes[this.selectedIndex]?.node;
 	}
 
+	private getNavigationKind(flatNode: FlatNode): string {
+		const entry = flatNode.node.entry;
+		if (entry.type === "message") {
+			return `message:${entry.message.role}`;
+		}
+		if (entry.type === "custom_message" || entry.type === "custom") {
+			return `${entry.type}:${entry.customType}`;
+		}
+		return entry.type;
+	}
+
+	private jumpToSameNavigationKind(direction: "up" | "down"): void {
+		const current = this.filteredNodes[this.selectedIndex];
+		if (!current) return;
+
+		const kind = this.getNavigationKind(current);
+		const step = direction === "up" ? -1 : 1;
+
+		for (let i = this.selectedIndex + step; i >= 0 && i < this.filteredNodes.length; i += step) {
+			if (this.getNavigationKind(this.filteredNodes[i]) === kind) {
+				this.selectedIndex = i;
+				return;
+			}
+		}
+	}
+
 	updateNodeLabel(entryId: string, label: string | undefined, labelTimestamp?: string): void {
 		for (const flatNode of this.flatNodes) {
 			if (flatNode.node.entry.id === entryId) {
@@ -898,7 +924,11 @@ class TreeList implements Component {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
-		if (kb.matches(keyData, "tui.select.up")) {
+		if (kb.matches(keyData, "app.tree.jumpSameTypeUp")) {
+			this.jumpToSameNavigationKind("up");
+		} else if (kb.matches(keyData, "app.tree.jumpSameTypeDown")) {
+			this.jumpToSameNavigationKind("down");
+		} else if (kb.matches(keyData, "tui.select.up")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredNodes.length - 1 : this.selectedIndex - 1;
 		} else if (kb.matches(keyData, "tui.select.down")) {
 			this.selectedIndex = this.selectedIndex === this.filteredNodes.length - 1 ? 0 : this.selectedIndex + 1;
@@ -1189,7 +1219,7 @@ export class TreeSelectorComponent extends Container implements Focusable {
 			new TruncatedText(
 				theme.fg(
 					"muted",
-					`  ↑/↓: move. ←/→: page. ^←/^→ or Alt+←/Alt+→: fold/branch. ${keyText("app.tree.editLabel")}: label. ${filterKeys}: filters (${cycleKeys} cycle). ${keyText("app.tree.toggleLabelTimestamp")}: label time`,
+					`  ↑/↓: move. ${keyText("app.tree.jumpSameTypeUp")}/${keyText("app.tree.jumpSameTypeDown")}: same type. ←/→: page. ^←/^→ or Alt+←/Alt+→: fold/branch. ${keyText("app.tree.editLabel")}: label. ${filterKeys}: filters (${cycleKeys} cycle). ${keyText("app.tree.toggleLabelTimestamp")}: label time`,
 				),
 				0,
 				0,
