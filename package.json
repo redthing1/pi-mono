@@ -14,9 +14,9 @@
 	],
 	"scripts": {
 		"clean": "bun run --workspaces --if-present clean",
-		"build": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && bun run build && cd ../mom && bun run build && cd ../web-ui && bun run build && cd ../pods && bun run build",
+		"build": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && bun run build && cd ../web-ui && bun run build",
 		"build:pi": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && bun run build",
-		"dev": "concurrently --names \"ai,agent,coding-agent,mom,web-ui,tui\" --prefix-colors \"cyan,yellow,red,white,green,magenta\" \"cd packages/ai && bun run dev\" \"cd packages/agent && bun run dev\" \"cd packages/coding-agent && bun run dev\" \"cd packages/mom && bun run dev\" \"cd packages/web-ui && bun run dev\" \"cd packages/tui && bun run dev\"",
+		"dev": "concurrently --names \"ai,agent,coding-agent,web-ui,tui\" --prefix-colors \"cyan,yellow,red,green,magenta\" \"cd packages/ai && bun run dev\" \"cd packages/agent && bun run dev\" \"cd packages/coding-agent && bun run dev\" \"cd packages/web-ui && bun run dev\" \"cd packages/tui && bun run dev\"",
 		"dev:tsc": "concurrently --names \"ai,web-ui\" --prefix-colors \"cyan,green\" \"cd packages/ai && bun run dev:tsc\" \"cd packages/web-ui && bun run dev:tsc\"",
 		"check": "biome check --write --error-on-warnings . && tsgo --noEmit && bun run check:browser-smoke && cd packages/web-ui && bun run check",
 		"check:browser-smoke": "bun scripts/check-browser-smoke.mjs",

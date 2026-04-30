@@ -20,7 +20,6 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	EditorComponent,
-	EditorTheme,
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
@@ -60,6 +59,7 @@ import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../.
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.js";
 import type {
 	AutocompleteProviderFactory,
+	EditorFactory,
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionRunner,
@@ -72,6 +72,7 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.j
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.js";
 import { DefaultPackageManager } from "../../core/package-manager.js";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
@@ -185,32 +186,6 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 
 const BEDROCK_PROVIDER_ID = "amazon-bedrock";
 
-const API_KEY_LOGIN_PROVIDERS: Record<string, string> = {
-	anthropic: "Anthropic",
-	[BEDROCK_PROVIDER_ID]: "Amazon Bedrock",
-	"azure-openai-responses": "Azure OpenAI Responses",
-	cerebras: "Cerebras",
-	"cloudflare-workers-ai": "Cloudflare Workers AI",
-	deepseek: "DeepSeek",
-	fireworks: "Fireworks",
-	google: "Google Gemini",
-	"google-vertex": "Google Vertex AI",
-	groq: "Groq",
-	huggingface: "Hugging Face",
-	"kimi-coding": "Kimi For Coding",
-	mistral: "Mistral",
-	minimax: "MiniMax",
-	"minimax-cn": "MiniMax (China)",
-	opencode: "OpenCode Zen",
-	"opencode-go": "OpenCode Go",
-	openai: "OpenAI",
-	openrouter: "OpenRouter",
-	"vercel-ai-gateway": "Vercel AI Gateway",
-	xai: "xAI",
-	zai: "ZAI",
-};
-
-const BUILT_IN_API_KEY_LOGIN_PROVIDERS = new Set(Object.keys(API_KEY_LOGIN_PROVIDERS));
 const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
 
 export function isApiKeyLoginProvider(
@@ -218,17 +193,13 @@ export function isApiKeyLoginProvider(
 	oauthProviderIds: ReadonlySet<string>,
 	builtInProviderIds: ReadonlySet<string> = BUILT_IN_MODEL_PROVIDERS,
 ): boolean {
-	if (BUILT_IN_API_KEY_LOGIN_PROVIDERS.has(providerId)) {
+	if (BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId]) {
 		return true;
 	}
 	if (builtInProviderIds.has(providerId)) {
 		return false;
 	}
 	return !oauthProviderIds.has(providerId);
-}
-
-export function getApiKeyProviderDisplayName(providerId: string): string {
-	return API_KEY_LOGIN_PROVIDERS[providerId] ?? providerId;
 }
 
 /**
@@ -257,6 +228,7 @@ export class InteractiveMode {
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
+	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
@@ -2179,6 +2151,7 @@ export class InteractiveMode {
 				this.setupAutocompleteProvider();
 			},
 			setEditorComponent: (factory) => this.setCustomEditorComponent(factory),
+			getEditorComponent: () => this.editorComponentFactory,
 			get theme() {
 				return theme;
 			},
@@ -2376,9 +2349,9 @@ export class InteractiveMode {
 	 * Set a custom editor component from an extension.
 	 * Pass undefined to restore the default editor.
 	 */
-	private setCustomEditorComponent(
-		factory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent) | undefined,
-	): void {
+	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
+		this.editorComponentFactory = factory;
+
 		// Save text from current editor before switching
 		const currentText = this.editor.getText();
 
@@ -2877,6 +2850,11 @@ export class InteractiveMode {
 				this.updateTerminalTitle();
 				this.footer.invalidate();
 				this.ui.requestRender();
+				break;
+
+			case "thinking_level_changed":
+				this.footer.invalidate();
+				this.updateEditorBorderColor();
 				break;
 
 			case "message_start":
@@ -4572,7 +4550,7 @@ export class InteractiveMode {
 			}
 			options.push({
 				id: providerId,
-				name: getApiKeyProviderDisplayName(providerId),
+				name: this.session.modelRegistry.getProviderDisplayName(providerId),
 				authType: "api_key",
 			});
 		}
@@ -4583,7 +4561,6 @@ export class InteractiveMode {
 
 	private getLogoutProviderOptions(): AuthSelectorProvider[] {
 		const authStorage = this.session.modelRegistry.authStorage;
-		const oauthNameById = new Map(authStorage.getOAuthProviders().map((provider) => [provider.id, provider.name]));
 		const options: AuthSelectorProvider[] = [];
 
 		for (const providerId of authStorage.list()) {
@@ -4593,10 +4570,7 @@ export class InteractiveMode {
 			}
 			options.push({
 				id: providerId,
-				name:
-					credential.type === "oauth"
-						? (oauthNameById.get(providerId) ?? providerId)
-						: getApiKeyProviderDisplayName(providerId),
+				name: this.session.modelRegistry.getProviderDisplayName(providerId),
 				authType: credential.type,
 			});
 		}
