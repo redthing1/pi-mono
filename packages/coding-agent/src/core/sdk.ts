@@ -47,6 +47,8 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Restrict automatic startup model restore/fallback to this provider. */
+	providerScope?: string;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -212,23 +214,35 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
+	const providerScope = options.providerScope;
+
+	if (model && providerScope && model.provider !== providerScope) {
+		modelFallbackMessage = `Model ${model.provider}/${model.id} is outside provider scope "${providerScope}"`;
+		model = undefined;
+	}
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
-		const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
-		if (restoredModel && modelRegistry.hasConfiguredAuth(restoredModel)) {
-			model = restoredModel;
-		}
-		if (!model) {
-			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
+		const savedModelRef = `${existingSession.model.provider}/${existingSession.model.modelId}`;
+		if (providerScope && existingSession.model.provider !== providerScope) {
+			modelFallbackMessage = `Session model ${savedModelRef} is outside provider scope "${providerScope}"`;
+		} else {
+			const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
+			if (restoredModel && modelRegistry.hasConfiguredAuth(restoredModel)) {
+				model = restoredModel;
+			}
+			if (!model) {
+				modelFallbackMessage = `Could not restore model ${savedModelRef}`;
+			}
 		}
 	}
 
 	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
 		const result = await findInitialModel({
-			scopedModels: [],
+			scopedModels: options.scopedModels ?? [],
 			isContinuing: hasExistingSession,
+			providerScope,
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
 			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
@@ -236,9 +250,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 		model = result.model;
 		if (!model) {
-			modelFallbackMessage = formatNoModelsAvailableMessage();
+			modelFallbackMessage = providerScope
+				? `${modelFallbackMessage ? `${modelFallbackMessage}. ` : ""}No authenticated models available for provider "${providerScope}". Provider scope prevents fallback to another provider.`
+				: formatNoModelsAvailableMessage();
 		} else if (modelFallbackMessage) {
-			modelFallbackMessage += `. Using ${model.provider}/${model.id}`;
+			modelFallbackMessage += providerScope
+				? `. Provider scope "${providerScope}" is active; using ${model.provider}/${model.id}`
+				: `. Using ${model.provider}/${model.id}`;
 		}
 	}
 

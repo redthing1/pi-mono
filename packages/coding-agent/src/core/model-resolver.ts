@@ -522,6 +522,7 @@ export async function findInitialModel(options: {
 	cliModel?: string;
 	scopedModels: ScopedModel[];
 	isContinuing: boolean;
+	providerScope?: string;
 	defaultProvider?: string;
 	defaultModelId?: string;
 	defaultThinkingLevel?: ThinkingLevel;
@@ -532,6 +533,7 @@ export async function findInitialModel(options: {
 		cliModel,
 		scopedModels,
 		isContinuing,
+		providerScope,
 		defaultProvider,
 		defaultModelId,
 		defaultThinkingLevel,
@@ -558,16 +560,19 @@ export async function findInitialModel(options: {
 	}
 
 	// 2. Use first model from scoped models (skip if continuing/resuming)
-	if (scopedModels.length > 0 && !isContinuing) {
+	const scopedCandidates = providerScope
+		? scopedModels.filter((scoped) => scoped.model.provider === providerScope)
+		: scopedModels;
+	if (scopedCandidates.length > 0 && !isContinuing) {
 		return {
-			model: scopedModels[0].model,
-			thinkingLevel: scopedModels[0].thinkingLevel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
+			model: scopedCandidates[0].model,
+			thinkingLevel: scopedCandidates[0].thinkingLevel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
 			fallbackMessage: undefined,
 		};
 	}
 
 	// 3. Try saved default from settings
-	if (defaultProvider && defaultModelId) {
+	if (defaultProvider && defaultModelId && (!providerScope || defaultProvider === providerScope)) {
 		const found = modelRegistry.find(defaultProvider, defaultModelId);
 		if (found) {
 			model = found;
@@ -579,12 +584,16 @@ export async function findInitialModel(options: {
 	}
 
 	// 4. Try first available model with valid API key
-	const availableModels = await modelRegistry.getAvailable();
+	const availableModels = providerScope
+		? (await modelRegistry.getAvailable()).filter((availableModel) => availableModel.provider === providerScope)
+		: await modelRegistry.getAvailable();
 
 	if (availableModels.length > 0) {
 		// Try to find a default model from known providers
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+		const defaultProviders = providerScope ? [providerScope as KnownProvider] : Object.keys(defaultModelPerProvider);
+		for (const provider of defaultProviders as KnownProvider[]) {
 			const defaultId = defaultModelPerProvider[provider];
+			if (!defaultId) continue;
 			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
 			if (match) {
 				return { model: match, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
