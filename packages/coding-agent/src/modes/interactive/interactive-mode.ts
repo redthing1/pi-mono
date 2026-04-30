@@ -536,7 +536,7 @@ export class InteractiveMode {
 				const models =
 					this.session.scopedModels.length > 0
 						? this.session.scopedModels.map((s) => s.model)
-						: this.session.modelRegistry.getAvailable();
+						: this.filterModelsForProviderScope(this.session.modelRegistry.getAvailable());
 
 				if (models.length === 0) return null;
 
@@ -598,6 +598,11 @@ export class InteractiveMode {
 			this.fdPath,
 		);
 		return this.createSkillMentionAutocompleteProvider(provider);
+	}
+
+	private filterModelsForProviderScope(models: Model<any>[]): Model<any>[] {
+		const providerScope = this.session.providerScope;
+		return providerScope ? models.filter((model) => model.provider === providerScope) : models;
 	}
 
 	private setupAutocompleteProvider(): void {
@@ -4123,7 +4128,7 @@ export class InteractiveMode {
 
 		this.session.modelRegistry.refresh();
 		try {
-			return await this.session.modelRegistry.getAvailable();
+			return this.filterModelsForProviderScope(await this.session.modelRegistry.getAvailable());
 		} catch {
 			return [];
 		}
@@ -4195,6 +4200,7 @@ export class InteractiveMode {
 					this.ui.requestRender();
 				},
 				initialSearchInput,
+				this.session.providerScope,
 			);
 			return { component: selector, focus: selector };
 		});
@@ -4203,7 +4209,7 @@ export class InteractiveMode {
 	private async showModelsSelector(): Promise<void> {
 		// Get all available models
 		this.session.modelRegistry.refresh();
-		const allModels = this.session.modelRegistry.getAvailable();
+		const allModels = this.filterModelsForProviderScope(this.session.modelRegistry.getAvailable());
 
 		if (allModels.length === 0) {
 			this.showStatus("No models available");
@@ -4224,7 +4230,9 @@ export class InteractiveMode {
 			// Fall back to settings
 			const patterns = this.settingsManager.getEnabledModels();
 			if (patterns !== undefined && patterns.length > 0) {
-				const scopedModels = await resolveModelScope(patterns, this.session.modelRegistry);
+				const scopedModels = await resolveModelScope(patterns, this.session.modelRegistry, {
+					provider: this.session.providerScope,
+				});
 				currentEnabledIds = scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
 			}
 		}
@@ -4233,7 +4241,9 @@ export class InteractiveMode {
 		const updateSessionModels = async (enabledIds: string[] | null) => {
 			currentEnabledIds = enabledIds === null ? null : [...enabledIds];
 			if (enabledIds && enabledIds.length > 0 && enabledIds.length < allModels.length) {
-				const newScopedModels = await resolveModelScope(enabledIds, this.session.modelRegistry);
+				const newScopedModels = await resolveModelScope(enabledIds, this.session.modelRegistry, {
+					provider: this.session.providerScope,
+				});
 				this.session.setScopedModels(
 					newScopedModels.map((sm) => ({
 						model: sm.model,

@@ -554,13 +554,15 @@ export async function main(args: string[], options?: MainOptions) {
 		];
 
 		let providerScope: string | undefined;
-		if (parsed.provider && !parsed.model) {
+		const providerScopeName = parsed.provider ?? settingsManager.getProviderScope();
+		if (providerScopeName) {
 			const resolvedProvider = resolveCliProvider({
-				cliProvider: parsed.provider,
+				cliProvider: providerScopeName,
 				modelRegistry,
 			});
 			if (resolvedProvider.error) {
 				diagnostics.push({ type: "error", message: resolvedProvider.error });
+				providerScope = providerScopeName;
 			} else {
 				providerScope = resolvedProvider.provider;
 			}
@@ -568,14 +570,14 @@ export async function main(args: string[], options?: MainOptions) {
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		let scopedModels: ScopedModel[] = [];
-		if (providerScope && !parsed.models) {
+		if (providerScope && !parsed.models && !parsed.model) {
 			scopedModels = (await modelRegistry.getAvailable())
 				.filter((model) => model.provider === providerScope)
 				.map((model) => ({ model }));
 		} else if (modelPatterns && modelPatterns.length > 0) {
 			scopedModels = await resolveModelScope(modelPatterns, modelRegistry, { provider: providerScope });
 		}
-		if (providerScope && scopedModels.length === 0) {
+		if (providerScope && !parsed.model && scopedModels.length === 0) {
 			diagnostics.push({ type: "error", message: `No available models found for provider "${providerScope}".` });
 		}
 		const {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@mariozechner/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
@@ -9,7 +9,7 @@ import { createAgentSession } from "../src/core/sdk.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 
-function registerModel(modelRegistry: ModelRegistry, provider: string, modelId: string): Model<any> {
+function registerModel(modelRegistry: ModelRegistry, provider: string, modelId: string): Model<Api> {
 	modelRegistry.registerProvider(provider, {
 		baseUrl: `https://${provider}.test/v1`,
 		apiKey: `${provider}-key`,
@@ -34,7 +34,7 @@ function registerModel(modelRegistry: ModelRegistry, provider: string, modelId: 
 	return model;
 }
 
-function createExistingSession(model: Model<any>): SessionManager {
+function createExistingSession(model: Model<Api>): SessionManager {
 	const sessionManager = SessionManager.inMemory();
 	sessionManager.appendModelChange(model.provider, model.id);
 	sessionManager.appendMessage({ role: "user", content: "hello", timestamp: 1 });
@@ -83,6 +83,33 @@ describe("createAgentSession provider scope", () => {
 			'Session model risky-provider/risky-model is outside provider scope "safe-provider"',
 		);
 		expect(modelFallbackMessage).toContain("using safe-provider/safe-model");
+		expect(session.providerScope).toBe("safe-provider");
+		await expect(session.setModel(riskyModel)).rejects.toThrow(
+			'Model risky-provider/risky-model is outside provider scope "safe-provider"',
+		);
+
+		session.dispose();
+	});
+
+	it("uses provider scope from settings when no explicit option is provided", async () => {
+		const authStorage = AuthStorage.inMemory();
+		const modelRegistry = ModelRegistry.inMemory(authStorage);
+		const riskyModel = registerModel(modelRegistry, "risky-provider", "risky-model");
+		registerModel(modelRegistry, "safe-provider", "safe-model");
+		const sessionManager = createExistingSession(riskyModel);
+
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			authStorage,
+			modelRegistry,
+			settingsManager: SettingsManager.inMemory({ providerScope: "safe-provider" }),
+			sessionManager,
+		});
+
+		expect(session.model?.provider).toBe("safe-provider");
+		expect(session.model?.id).toBe("safe-model");
+		expect(session.providerScope).toBe("safe-provider");
 
 		session.dispose();
 	});

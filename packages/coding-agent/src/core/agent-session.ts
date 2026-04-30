@@ -146,6 +146,8 @@ export interface AgentSessionConfig {
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Optional provider boundary for model restore, selection, and cycling. */
+	providerScope?: string;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -245,6 +247,7 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _providerScope?: string;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -312,7 +315,8 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
-		this._scopedModels = config.scopedModels ?? [];
+		this._providerScope = config.providerScope;
+		this._scopedModels = this._filterScopedModelsForProviderScope(config.scopedModels ?? []);
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
@@ -748,6 +752,11 @@ export class AgentSession {
 		return this.agent.state.model;
 	}
 
+	/** Provider boundary for model restore, selection, and cycling. */
+	get providerScope(): string | undefined {
+		return this._providerScope;
+	}
+
 	/** Current thinking level */
 	get thinkingLevel(): ThinkingLevel {
 		return this.agent.state.thinkingLevel;
@@ -861,7 +870,7 @@ export class AgentSession {
 
 	/** Update scoped models for cycling */
 	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
-		this._scopedModels = scopedModels;
+		this._scopedModels = this._filterScopedModelsForProviderScope(scopedModels);
 	}
 
 	/** File-based prompt templates */
@@ -1436,6 +1445,9 @@ export class AgentSession {
 	 * @throws Error if no auth is configured for the model
 	 */
 	async setModel(model: Model<any>): Promise<void> {
+		if (!this._isModelInsideProviderScope(model)) {
+			throw new Error(`Model ${model.provider}/${model.id} is outside provider scope "${this._providerScope}"`);
+		}
 		if (!this._modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -1466,7 +1478,9 @@ export class AgentSession {
 	}
 
 	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const scopedModels = this._scopedModels.filter((scoped) => this._modelRegistry.hasConfiguredAuth(scoped.model));
+		const scopedModels = this._filterScopedModelsForProviderScope(this._scopedModels).filter((scoped) =>
+			this._modelRegistry.hasConfiguredAuth(scoped.model),
+		);
 		if (scopedModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
@@ -1495,7 +1509,9 @@ export class AgentSession {
 	}
 
 	private async _cycleAvailableModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const availableModels = await this._modelRegistry.getAvailable();
+		const availableModels = (await this._modelRegistry.getAvailable()).filter((model) =>
+			this._isModelInsideProviderScope(model),
+		);
 		if (availableModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
@@ -1517,6 +1533,18 @@ export class AgentSession {
 		await this._emitModelSelect(nextModel, currentModel, "cycle");
 
 		return { model: nextModel, thinkingLevel: this.thinkingLevel, isScoped: false };
+	}
+
+	private _isModelInsideProviderScope(model: Model<any>): boolean {
+		return !this._providerScope || model.provider === this._providerScope;
+	}
+
+	private _filterScopedModelsForProviderScope(
+		scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>,
+	): Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
+		return this._providerScope
+			? scopedModels.filter((scoped) => scoped.model.provider === this._providerScope)
+			: scopedModels;
 	}
 
 	// =========================================================================

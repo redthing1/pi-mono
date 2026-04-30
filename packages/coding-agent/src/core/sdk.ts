@@ -47,7 +47,7 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
-	/** Restrict automatic startup model restore/fallback to this provider. */
+	/** Restrict model restore, fallback, selection, and cycling to this provider. */
 	providerScope?: string;
 
 	/**
@@ -214,7 +214,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
-	const providerScope = options.providerScope;
+	const providerScopeName = options.providerScope ?? settingsManager.getProviderScope();
+	const providerScopeMatch = providerScopeName
+		? modelRegistry.getAll().find((candidate) => candidate.provider.toLowerCase() === providerScopeName.toLowerCase())
+		: undefined;
+	const providerScope = providerScopeMatch?.provider ?? providerScopeName;
 
 	if (model && providerScope && model.provider !== providerScope) {
 		modelFallbackMessage = `Model ${model.provider}/${model.id} is outside provider scope "${providerScope}"`;
@@ -406,6 +410,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		settingsManager,
 		cwd,
 		scopedModels: options.scopedModels,
+		providerScope,
 		resourceLoader,
 		customTools: options.customTools,
 		modelRegistry,

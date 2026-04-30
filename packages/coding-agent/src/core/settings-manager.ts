@@ -78,6 +78,7 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
+	providerScope?: string;
 	providerLastModels?: Record<string, string>;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	transport?: TransportSetting; // default: "sse"
@@ -591,6 +592,10 @@ export class SettingsManager {
 
 	getDefaultProvider(): string | undefined {
 		return this.settings.defaultProvider;
+	}
+
+	getProviderScope(): string | undefined {
+		return this.settings.providerScope;
 	}
 
 	getDefaultModel(): string | undefined {

@@ -370,4 +370,13 @@ describe("SettingsManager", () => {
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
+
+	describe("providerScope", () => {
+		it("uses project providerScope over global providerScope", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ providerScope: "global-provider" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ providerScope: "project-provider" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getProviderScope()).toBe("project-provider");
+		});
+	});
 });

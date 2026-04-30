@@ -57,6 +57,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private errorMessage?: string;
 	private tui: TUI;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
+	private providerScope?: string;
 	private scope: ModelScope = "all";
 	private scopeText?: Text;
 	private scopeHintText?: Text;
@@ -70,6 +71,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		onSelect: (model: Model<any>) => void,
 		onCancel: () => void,
 		initialSearchInput?: string,
+		providerScope?: string,
 	) {
 		super();
 
@@ -77,8 +79,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.currentModel = currentModel;
 		this.settingsManager = settingsManager;
 		this.modelRegistry = modelRegistry;
-		this.scopedModels = scopedModels;
-		this.scope = scopedModels.length > 0 ? "scoped" : "all";
+		this.providerScope = providerScope;
+		this.scopedModels = this.filterScopedModels(scopedModels);
+		this.scope = this.scopedModels.length > 0 ? "scoped" : "all";
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 
@@ -87,7 +90,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add hint about model filtering
-		if (scopedModels.length > 0) {
+		if (this.scopedModels.length > 0) {
 			this.scopeText = new Text(this.getScopeText(), 0, 0);
 			this.addChild(this.scopeText);
 			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
@@ -148,7 +151,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 		// Load available models (built-in models still work even if models.json failed)
 		try {
-			const availableModels = await this.modelRegistry.getAvailable();
+			const availableModels = this.filterModelsForProviderScope(await this.modelRegistry.getAvailable());
 			models = availableModels.map((model: Model<any>) => ({
 				provider: model.provider,
 				id: model.id,
@@ -164,10 +167,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 
 		this.allModels = this.sortModels(models);
-		this.scopedModels = this.scopedModels.map((scoped) => {
-			const refreshed = this.modelRegistry.find(scoped.model.provider, scoped.model.id);
-			return refreshed ? { ...scoped, model: refreshed } : scoped;
-		});
+		this.scopedModels = this.filterScopedModels(
+			this.scopedModels.map((scoped) => {
+				const refreshed = this.modelRegistry.find(scoped.model.provider, scoped.model.id);
+				return refreshed ? { ...scoped, model: refreshed } : scoped;
+			}),
+		);
 		this.scopedModelItems = this.scopedModels.map((scoped) => ({
 			provider: scoped.model.provider,
 			id: scoped.model.id,
@@ -191,6 +196,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			return a.provider.localeCompare(b.provider);
 		});
 		return sorted;
+	}
+
+	private filterModelsForProviderScope(models: Model<any>[]): Model<any>[] {
+		return this.providerScope ? models.filter((model) => model.provider === this.providerScope) : models;
+	}
+
+	private filterScopedModels(scopedModels: ReadonlyArray<ScopedModelItem>): ScopedModelItem[] {
+		return this.providerScope
+			? scopedModels.filter((scoped) => scoped.model.provider === this.providerScope)
+			: [...scopedModels];
 	}
 
 	private getScopeText(): string {
