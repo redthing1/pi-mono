@@ -81,7 +81,7 @@ export interface Settings {
 	providerScope?: string;
 	providerLastModels?: Record<string, string>;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-	transport?: TransportSetting; // default: "sse"
+	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
@@ -680,7 +680,7 @@ export class SettingsManager {
 	}
 
 	getTransport(): TransportSetting {
-		return this.settings.transport ?? "sse";
+		return this.settings.transport ?? "auto";
 	}
 
 	setTransport(transport: TransportSetting): void {

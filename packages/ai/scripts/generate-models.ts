@@ -4,6 +4,7 @@ import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
+	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
@@ -76,6 +77,82 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4",
 	"github-copilot:claude-sonnet-4.5",
 ]);
+
+const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: null,
+	medium: null,
+	high: "high",
+	xhigh: "max",
+} as const;
+
+function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
+	model.thinkingLevelMap = { ...model.thinkingLevelMap, ...map };
+}
+
+function supportsOpenAiXhigh(modelId: string): boolean {
+	return (
+		modelId.includes("gpt-5.2") ||
+		modelId.includes("gpt-5.3") ||
+		modelId.includes("gpt-5.4") ||
+		modelId.includes("gpt-5.5")
+	);
+}
+
+function isGoogleThinkingApi(model: Model<any>): boolean {
+	return model.api === "google-generative-ai" || model.api === "google-vertex";
+}
+
+function isGemini3ProModel(modelId: string): boolean {
+	return /gemini-3(?:\.\d+)?-pro/.test(modelId.toLowerCase());
+}
+
+function isGemini3FlashModel(modelId: string): boolean {
+	return /gemini-3(?:\.\d+)?-flash/.test(modelId.toLowerCase());
+}
+
+function isGemma4Model(modelId: string): boolean {
+	return /gemma-?4/.test(modelId.toLowerCase());
+}
+
+function applyThinkingLevelMetadata(model: Model<any>): void {
+	if (
+		(model.api === "openai-responses" || model.api === "azure-openai-responses") &&
+		model.id.startsWith("gpt-5")
+	) {
+		mergeThinkingLevelMap(model, { off: null });
+	}
+	if (supportsOpenAiXhigh(model.id)) {
+		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
+	}
+	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
+		mergeThinkingLevelMap(model, { xhigh: "max" });
+	}
+	if (model.id.includes("opus-4-7") || model.id.includes("opus-4.7")) {
+		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
+	}
+	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
+		mergeThinkingLevelMap(model, DEEPSEEK_V4_THINKING_LEVEL_MAP);
+	}
+	if (isGoogleThinkingApi(model) && isGemini3ProModel(model.id)) {
+		mergeThinkingLevelMap(model, { off: null, minimal: null, low: "LOW", medium: null, high: "HIGH" });
+	}
+	if (isGoogleThinkingApi(model) && isGemini3FlashModel(model.id)) {
+		mergeThinkingLevelMap(model, { off: null });
+	}
+	if (isGoogleThinkingApi(model) && isGemma4Model(model.id)) {
+		mergeThinkingLevelMap(model, { off: null, minimal: "MINIMAL", low: null, medium: null, high: "HIGH" });
+	}
+	if (model.provider === "groq" && model.id === "qwen/qwen3-32b") {
+		mergeThinkingLevelMap(model, { minimal: null, low: null, medium: null, high: "default" });
+	}
+	if (model.provider === "openai-codex" && supportsOpenAiXhigh(model.id)) {
+		mergeThinkingLevelMap(model, { minimal: "low" });
+	}
+	if (model.provider === "openai-codex" && model.id === "gpt-5.1-codex-mini") {
+		mergeThinkingLevelMap(model, { minimal: "medium", low: "medium", medium: "medium", high: "high" });
+	}
+}
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
 	return EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)
@@ -419,14 +496,18 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const upstream = prefixedId.slice(0, slashIdx);
 				const nativeId = prefixedId.slice(slashIdx + 1);
 
-				let api: "openai-completions" | "openai-responses";
+				let api: "anthropic-messages" | "openai-completions" | "openai-responses";
 				let baseUrl: string;
 				let id: string;
 				if (upstream === "openai") {
 					api = "openai-responses";
 					baseUrl = CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL;
 					id = nativeId;
-				} else if (upstream === "workers-ai" || upstream === "anthropic") {
+				} else if (upstream === "anthropic") {
+					api = "anthropic-messages";
+					baseUrl = CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL;
+					id = nativeId;
+				} else if (upstream === "workers-ai") {
 					api = "openai-completions";
 					baseUrl = CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL;
 					id = prefixedId;
@@ -643,6 +724,26 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl = `${variant.basePath}/v1`;
 				}
 
+				// Fix known mismatches between models.dev npm data and actual
+				// OpenCode Go endpoint behaviour. models.dev reports these models
+				// as @ai-sdk/anthropic, but the OpenCode Go endpoints either don't
+				// accept Anthropic SDK auth (MiniMax M2.7) or are served through
+				// the OpenAI-compatible /v1/chat/completions path (Qwen 3.5/3.6).
+				// Switch them to openai-completions so requests use Bearer auth
+				// and the standard /v1/chat/completions endpoint.
+				if (variant.provider === "opencode-go") {
+					if (modelId === "minimax-m2.7") {
+						api = "openai-completions";
+						baseUrl = `${variant.basePath}/v1`;
+					}
+					if (modelId === "qwen3.5-plus" || modelId === "qwen3.6-plus") {
+						api = "openai-completions";
+						baseUrl = `${variant.basePath}/v1`;
+						// Qwen/DashScope uses enable_thinking at the top level.
+						compat = { ...(compat ?? {}), thinkingFormat: "qwen" };
+					}
+				}
+
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -825,6 +926,32 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					compat: moonshotCompat,
+				});
+			}
+		}
+
+		// Process Xiaomi MiMo models
+		if (data.xiaomi?.models) {
+			for (const [modelId, model] of Object.entries(data.xiaomi.models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "anthropic-messages",
+					provider: "xiaomi",
+					baseUrl: "https://token-plan-ams.xiaomimimo.com/anthropic",
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
 				});
 			}
 		}
@@ -1133,13 +1260,6 @@ async function generateModels() {
 	const deepseekCompat: OpenAICompletionsCompat = {
 		requiresReasoningContentOnAssistantMessages: true,
 		thinkingFormat: "deepseek",
-		reasoningEffortMap: {
-			minimal: "high",
-			low: "high",
-			medium: "high",
-			high: "high",
-			xhigh: "max",
-		},
 	};
 	const deepseekV4Models: Model<"openai-completions">[] = [
 		{
@@ -1189,10 +1309,11 @@ async function generateModels() {
 					? {
 							requiresReasoningContentOnAssistantMessages:
 								deepseekCompat.requiresReasoningContentOnAssistantMessages,
-							reasoningEffortMap: deepseekCompat.reasoningEffortMap,
+							thinkingFormat: deepseekCompat.thinkingFormat,
 						}
 					: deepseekCompat),
 			};
+			mergeThinkingLevelMap(candidate, DEEPSEEK_V4_THINKING_LEVEL_MAP);
 		}
 	}
 
@@ -1584,6 +1705,10 @@ async function generateModels() {
 		}));
 	allModels.push(...azureOpenAiModels);
 
+	for (const model of allModels) {
+		applyThinkingLevelMetadata(model);
+	}
+
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {
@@ -1631,6 +1756,9 @@ export const MODELS = {
 `;
 			}
 			output += `\t\t\treasoning: ${model.reasoning},\n`;
+			if (model.thinkingLevelMap) {
+				output += `\t\t\tthinkingLevelMap: ${JSON.stringify(model.thinkingLevelMap)},\n`;
+			}
 			output += `\t\t\tinput: [${model.input.map(i => `"${i}"`).join(", ")}],\n`;
 			output += `\t\t\tcost: {\n`;
 			output += `\t\t\t\tinput: ${model.cost.input},\n`;

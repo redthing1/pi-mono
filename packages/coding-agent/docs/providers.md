@@ -15,26 +15,25 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 
 Use `/login` in interactive mode, then select a provider:
 
-- Claude Pro/Max
 - ChatGPT Plus/Pro (Codex)
+- Claude Pro/Max
 - GitHub Copilot
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+
+### OpenAI Codex
+
+- Requires ChatGPT Plus or Pro subscription
+- Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
+
+### Claude Pro/Max
+
+Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
 ### GitHub Copilot
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
-
-### Google Providers
-
-- Both free with any Google account, subject to rate limits
-- For paid Cloud Code Assist: set `GOOGLE_CLOUD_PROJECT` env var
-
-### OpenAI Codex
-
-- Requires ChatGPT Plus or Pro subscription
-- Personal use only; for production, use the OpenAI Platform API
 
 ## API Keys
 
@@ -70,6 +69,9 @@ pi
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
+| Xiaomi MiMo Token Plan | `XIAOMI_API_KEY` | `xiaomi` |
+
+The Xiaomi MiMo provider targets the Xiaomi MiMo Token Plan Anthropic-compatible endpoint.
 
 Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
 
@@ -84,7 +86,8 @@ Store credentials in `~/.pi/agent/auth.json`:
   "deepseek": { "type": "api_key", "key": "sk-..." },
   "google": { "type": "api_key", "key": "..." },
   "opencode": { "type": "api_key", "key": "..." },
-  "opencode-go": { "type": "api_key", "key": "..." }
+  "opencode-go": { "type": "api_key", "key": "..." },
+  "xiaomi": { "type": "api_key", "key": "..." }
 }
 ```
 
@@ -178,10 +181,21 @@ export AWS_BEDROCK_FORCE_HTTP1=1
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
 export CLOUDFLARE_GATEWAY_ID=...        # create at dash.cloudflare.com → AI → AI Gateway
-pi --provider cloudflare-ai-gateway --model "anthropic/claude-sonnet-4-5"
+pi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
 ```
 
-Routes to OpenAI, Anthropic, and Workers AI through Cloudflare's [Unified API](https://developers.cloudflare.com/ai-gateway/usage/unified-api/) (`/compat`). Workers AI and Anthropic models use the prefixed model id (`workers-ai/@cf/...`, `anthropic/...`). OpenAI reasoning models (gpt-5.x, o-series) need `/v1/responses` which `/compat` doesn't yet expose, so they route through the gateway's `/openai` provider-specific subpath with the native id (`gpt-5.1`). Requires BYOK or unified billing on the gateway for non-Workers-AI upstreams.
+Routes to OpenAI, Anthropic, and Workers AI through Cloudflare AI Gateway. Workers AI uses the Unified API (`/compat`) and prefixed model IDs (`workers-ai/@cf/...`). OpenAI uses the OpenAI passthrough route (`/openai`) with native OpenAI model IDs such as `gpt-5.1`. Anthropic uses the Anthropic passthrough route (`/anthropic`) with native Anthropic model IDs such as `claude-sonnet-4-5`.
+
+AI Gateway authentication uses `CLOUDFLARE_API_KEY` as `cf-aig-authorization`. Upstream authentication can be one of:
+
+| Mode | Request auth | Upstream auth |
+|------|--------------|---------------|
+| Workers AI | Cloudflare token only | Cloudflare-native |
+| Unified billing | Cloudflare token only | Cloudflare handles upstream auth and deducts credits |
+| Stored BYOK | Cloudflare token only | Cloudflare injects provider keys stored in the AI Gateway dashboard |
+| Inline BYOK | Cloudflare token plus upstream `Authorization` header | The request supplies the upstream provider key |
+
+For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
 
 ### Cloudflare Workers AI
 

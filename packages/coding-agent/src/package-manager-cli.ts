@@ -329,6 +329,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 	const agentDir = getAgentDir();
 	const settingsManager = SettingsManager.create(cwd, agentDir);
 	reportSettingsErrors(settingsManager, "package command");
+
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 
 	packageManager.setProgressCallback((event) => {
