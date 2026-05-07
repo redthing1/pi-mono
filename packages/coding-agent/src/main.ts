@@ -7,8 +7,8 @@
 
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import type { ImageContent } from "@mariozechner/pi-ai";
-import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
+import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
 import { processFileArguments } from "./cli/file-processor.js";
@@ -329,10 +329,10 @@ function buildSessionOptions(
 		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
 		const savedProvider = settingsManager.getDefaultProvider();
 		const savedModelId = settingsManager.getDefaultModel();
-		const findScopedModel = (provider: string | undefined, modelId: string | undefined): ScopedModel | undefined =>
-			provider && modelId
-				? scopedModels.find((scoped) => scoped.model.provider === provider && scoped.model.id === modelId)
-				: undefined;
+		const findScopedModel = (provider: string | undefined, modelId: string | undefined): ScopedModel | undefined => {
+			const model = provider && modelId ? modelRegistry.find(provider, modelId) : undefined;
+			return model ? scopedModels.find((scoped) => modelsAreEqual(scoped.model, model)) : undefined;
+		};
 		const savedInScope = findScopedModel(savedProvider, savedModelId);
 		const providerLastModelId = providerScope ? settingsManager.getProviderLastModel(providerScope) : undefined;
 		const providerLastInScope = findScopedModel(providerScope, providerLastModelId);

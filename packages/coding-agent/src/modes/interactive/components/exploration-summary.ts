@@ -1,4 +1,4 @@
-import { truncateToWidth } from "@mariozechner/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { invalidArgText, shortenPath, str } from "../../../core/tools/render-utils.js";
 import { theme } from "../theme/theme.js";
 import { formatBashExplorationSummary } from "./shell-exploration-summary.js";

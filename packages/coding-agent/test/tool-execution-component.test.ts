@@ -1,5 +1,5 @@
-import { join } from "node:path";
-import { Text, type TUI } from "@mariozechner/pi-tui";
+import { join, resolve } from "node:path";
+import { Text, type TUI } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -342,10 +342,18 @@ describe("ToolExecutionComponent parity", () => {
 		},
 		{
 			title: "AGENTS.md",
-			path: join(process.cwd(), "AGENTS.md"),
+			path: join(process.cwd(), ".pi", "AGENTS.md"),
 			content: "Hidden resource instructions",
-			compact: "read resource AGENTS.md",
+			compact: "read resource .pi/AGENTS.md",
 			hidden: "Hidden resource instructions",
+			absent: undefined,
+		},
+		{
+			title: "outside AGENTS.md",
+			path: resolve(process.cwd(), "..", "AGENTS.md"),
+			content: "Hidden outside resource instructions",
+			compact: `read resource ${resolve(process.cwd(), "..", "AGENTS.md").replace(/\\/g, "/")}`,
+			hidden: "Hidden outside resource instructions",
 			absent: undefined,
 		},
 		{
@@ -382,6 +390,27 @@ describe("ToolExecutionComponent parity", () => {
 			component.setExpanded(true);
 			const expanded = stripAnsi(component.render(120).join("\n"));
 			expect(expanded).toContain(scenario.hidden);
+		});
+	}
+
+	for (const scenario of [
+		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "[skill] attio:120-329" },
+		{ title: "Pi documentation", path: getReadmePath(), compact: "read docs README.md:120-329" },
+	] as const) {
+		test(`shows the read line range in compact ${scenario.title} reads before the expand hint`, () => {
+			const component = new ToolExecutionComponent(
+				"read",
+				`tool-compact-range-${scenario.title}`,
+				{ path: scenario.path, offset: 120, limit: 210 },
+				{},
+				createReadToolDefinition(process.cwd()),
+				createFakeTui(),
+				process.cwd(),
+			);
+
+			const collapsed = stripAnsi(component.render(120).join("\n"));
+			expect(collapsed).toContain(scenario.compact);
+			expect(collapsed.indexOf(":120-329")).toBeLessThan(collapsed.indexOf("to expand"));
 		});
 	}
 });

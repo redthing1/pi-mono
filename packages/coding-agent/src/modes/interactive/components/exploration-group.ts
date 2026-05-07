@@ -1,4 +1,4 @@
-import { Container } from "@mariozechner/pi-tui";
+import { Container } from "@earendil-works/pi-tui";
 import { renderCompactExplorationRows } from "./compact-exploration-render.js";
 import {
 	formatExplorationHeader,

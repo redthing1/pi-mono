@@ -1,4 +1,4 @@
-import { type TUI, visibleWidth } from "@mariozechner/pi-tui";
+import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test } from "vitest";
 import {

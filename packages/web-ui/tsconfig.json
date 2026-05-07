@@ -8,12 +8,12 @@
     "allowSyntheticDefaultImports": true,
     "baseUrl": "../..",
     "paths": {
-      "@mariozechner/pi-agent-core": ["packages/agent/src/index.ts"],
-      "@mariozechner/pi-agent-core/*": ["packages/agent/src/*"],
-      "@mariozechner/pi-ai": ["packages/ai/src/index.ts"],
-      "@mariozechner/pi-ai/*": ["packages/ai/src/*.ts", "packages/ai/src/providers/*.ts"],
-      "@mariozechner/pi-tui": ["packages/tui/src/index.ts"],
-      "@mariozechner/pi-tui/*": ["packages/tui/src/*"]
+      "@earendil-works/pi-agent-core": ["packages/agent/src/index.ts"],
+      "@earendil-works/pi-agent-core/*": ["packages/agent/src/*"],
+      "@earendil-works/pi-ai": ["packages/ai/src/index.ts"],
+      "@earendil-works/pi-ai/*": ["packages/ai/src/*.ts", "packages/ai/src/providers/*.ts"],
+      "@earendil-works/pi-tui": ["packages/tui/src/index.ts"],
+      "@earendil-works/pi-tui/*": ["packages/tui/src/*"]
     }
   },
   "include": ["src/**/*"]

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
+	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
 } from "../src/utils/version-check.js";
@@ -23,6 +24,7 @@ describe("version checks", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
+		await expect(getLatestPiRelease("1.2.3")).resolves.toBeUndefined();
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBeUndefined();
 		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toBeUndefined();

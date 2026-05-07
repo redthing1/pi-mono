@@ -1,3 +1,8 @@
+export interface LatestPiRelease {
+	version: string;
+	packageName?: string;
+}
+
 interface ParsedVersion {
 	major: number;
 	minor: number;
@@ -40,6 +45,14 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 		return comparison > 0;
 	}
 	return candidateVersion.trim() !== currentVersion.trim();
+}
+
+export async function getLatestPiRelease(
+	_currentVersion: string,
+	_options: { timeoutMs?: number } = {},
+): Promise<LatestPiRelease | undefined> {
+	// Fork policy: never poll upstream for Pi release notifications.
+	return undefined;
 }
 
 export async function getLatestPiVersion(

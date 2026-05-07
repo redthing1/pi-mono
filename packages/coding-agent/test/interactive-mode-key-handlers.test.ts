@@ -1,4 +1,4 @@
-import { Editor, type Terminal, TUI } from "@mariozechner/pi-tui";
+import { Editor, type Terminal, TUI } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.js";

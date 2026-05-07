@@ -22,7 +22,7 @@
 		"profile:tui": "bun scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "bun scripts/profile-coding-agent-node.mjs --mode rpc",
 		"test": "bun run --workspaces --if-present test",
-		"install:local-pi": "bun install --frozen-lockfile && bun run build:pi && bun link --cwd packages/coding-agent && bun add --global @redthing1/pi-coding-agent@link:@mariozechner/pi-coding-agent",
+		"install:local-pi": "bun install --frozen-lockfile && bun run build:pi && bun link --cwd packages/coding-agent && bun add --global @redthing1/pi-coding-agent@link:@earendil-works/pi-coding-agent",
 		"version:patch": "bun scripts/bump-version.mjs patch && bun scripts/sync-versions.js && bun install --lockfile-only",
 		"version:minor": "bun scripts/bump-version.mjs minor && bun scripts/sync-versions.js && bun install --lockfile-only",
 		"version:major": "bun scripts/bump-version.mjs major && bun scripts/sync-versions.js && bun install --lockfile-only",
@@ -52,8 +52,8 @@
 	},
 	"version": "0.0.3",
 	"dependencies": {
+		"@earendil-works/pi-coding-agent": "workspace:*",
 		"@mariozechner/jiti": "2.6.5",
-		"@mariozechner/pi-coding-agent": "workspace:*",
 		"get-east-asian-width": "1.4.0"
 	},
 	"overrides": {

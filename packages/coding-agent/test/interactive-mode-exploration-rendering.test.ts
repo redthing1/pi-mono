@@ -1,5 +1,5 @@
-import { getModel, type Usage } from "@mariozechner/pi-ai";
-import { Container } from "@mariozechner/pi-tui";
+import { getModel, type Usage } from "@earendil-works/pi-ai";
+import { Container } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { SessionContext } from "../src/core/session-manager.js";
