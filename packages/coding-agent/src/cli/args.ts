@@ -91,7 +91,7 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--append-system-prompt" && i + 1 < args.length) {
 			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
 			result.appendSystemPrompt.push(args[++i]);
-		} else if (arg === "--no-session") {
+		} else if (arg === "--no-session" || arg === "--zdr") {
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
@@ -225,7 +225,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Use specific session file or partial UUID
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
-  --no-session                   Don't save session (ephemeral)
+  --no-session, --zdr            Don't save session (client-side ephemeral)
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools, -nt                Disable all tools by default (built-in and extension)

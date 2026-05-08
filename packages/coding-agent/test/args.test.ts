@@ -157,6 +157,11 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-session"]);
 			expect(result.noSession).toBe(true);
 		});
+
+		test("parses --zdr alias", () => {
+			const result = parseArgs(["--zdr"]);
+			expect(result.noSession).toBe(true);
+		});
 	});
 
 	describe("--extension flag", () => {
