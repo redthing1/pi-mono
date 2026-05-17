@@ -124,6 +124,8 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	keepRecentTokens: 20000,
 };
 
+const COMPACTION_PROVIDER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 // ============================================================================
 // Token calculation
 // ============================================================================
@@ -568,8 +570,8 @@ export async function generateSummary(
 
 	const completionOptions =
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers };
+			? { maxTokens, signal, apiKey, headers, timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS, reasoning: thinkingLevel }
+			: { maxTokens, signal, apiKey, headers, timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS };
 
 	const response = await completeSimple(
 		model,
@@ -824,8 +826,8 @@ async function generateTurnPrefixSummary(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers },
+			? { maxTokens, signal, apiKey, headers, timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS, reasoning: thinkingLevel }
+			: { maxTokens, signal, apiKey, headers, timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS },
 	);
 
 	if (response.stopReason === "error") {

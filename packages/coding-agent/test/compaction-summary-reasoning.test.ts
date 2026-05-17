@@ -1,11 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateSummary } from "../src/core/compaction/index.js";
+import { type CompactionPreparation, compact, createFileOps, generateSummary } from "../src/core/compaction/index.js";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
 }));
+
+const COMPACTION_PROVIDER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 vi.mock("@earendil-works/pi-ai", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@earendil-works/pi-ai")>();
@@ -73,6 +75,7 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			reasoning: "medium",
 			apiKey: "test-key",
+			timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS,
 		});
 	});
 
@@ -92,6 +95,7 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			apiKey: "test-key",
+			timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS,
 		});
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
@@ -112,7 +116,32 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			apiKey: "test-key",
+			timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS,
 		});
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+	});
+
+	it("uses a long provider timeout for split-turn compaction summaries", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "kept-entry",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [{ role: "user", content: "Keep this prefix context.", timestamp: Date.now() }],
+			isSplitTurn: true,
+			tokensBefore: 1000,
+			fileOps: createFileOps(),
+			settings: {
+				enabled: true,
+				reserveTokens: 2000,
+				keepRecentTokens: 100,
+			},
+		};
+
+		await compact(preparation, createModel(false), "test-key");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+		expect(completeSimpleMock.mock.calls.map((call) => call[2])).toEqual([
+			expect.objectContaining({ timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS }),
+			expect.objectContaining({ timeoutMs: COMPACTION_PROVIDER_TIMEOUT_MS }),
+		]);
 	});
 });
