@@ -1,12 +1,12 @@
 import { Container } from "@earendil-works/pi-tui";
-import { renderCompactExplorationRows } from "./compact-exploration-render.js";
+import { renderCompactExplorationRows } from "./compact-exploration-render.ts";
 import {
 	formatExplorationHeader,
 	formatExplorationRows,
 	isExplorationToolName,
 	isExplorationToolSnapshot,
-} from "./exploration-summary.js";
-import type { ToolExecutionComponent } from "./tool-execution.js";
+} from "./exploration-summary.ts";
+import type { ToolExecutionComponent } from "./tool-execution.ts";
 
 export { isExplorationToolName, isExplorationToolSnapshot };
 

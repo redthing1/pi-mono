@@ -1,7 +1,7 @@
 import { Editor, type Terminal, TUI } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.js";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 class FakeTerminal implements Terminal {
 	columns = 80;

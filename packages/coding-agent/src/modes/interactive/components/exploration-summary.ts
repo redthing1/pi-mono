@@ -1,8 +1,8 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { invalidArgText, shortenPath, str } from "../../../core/tools/render-utils.js";
-import { theme } from "../theme/theme.js";
-import { formatBashExplorationSummary } from "./shell-exploration-summary.js";
-import type { ToolExecutionSnapshot } from "./tool-execution.js";
+import { invalidArgText, shortenPath, str } from "../../../core/tools/render-utils.ts";
+import { theme } from "../theme/theme.ts";
+import { formatBashExplorationSummary } from "./shell-exploration-summary.ts";
+import type { ToolExecutionSnapshot } from "./tool-execution.ts";
 
 const EXPLORATION_TOOL_NAMES = new Set(["read", "grep", "find", "ls"]);
 

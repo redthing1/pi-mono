@@ -53,9 +53,18 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
-| **[@earendil-works/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+
+## Permissions & Containerization
+
+Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+
+If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+
+- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
+- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
+- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
 
 ## Contributing
 
@@ -73,6 +82,18 @@ bun run check        # Lint, format, and type check
 ```
 
 > **Note:** `bun run check` requires `bun run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
+
+## Supply-chain hardening
+
+We treat dependency changes as reviewed code changes.
+
+- Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
+- `bun.lock` is the dependency ground truth and must be updated intentionally.
+- `bun run check` verifies pinned direct deps and native TypeScript import compatibility.
+- The trusted install path is a reviewed source checkout via `bun run install:local-pi`.
+- Registry package installs and automatic self-update are disabled in this fork.
+- Local and git Pi packages remain supported; git package dependencies install with Bun using `--ignore-scripts`.
+- Review upstream dependency and installer changes before adopting them.
 
 ## License
 

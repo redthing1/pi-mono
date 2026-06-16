@@ -1,5 +1,5 @@
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.js";
+import { theme } from "../theme/theme.ts";
 
 const FIRST_ROW_PREFIX = "  └ ";
 const ROW_PREFIX = "    ";

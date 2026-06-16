@@ -1,8 +1,13 @@
 import chalk from "chalk";
-import { selectConfig } from "./cli/config-selector.js";
-import { APP_NAME, getAgentDir } from "./config.js";
-import { DefaultPackageManager } from "./core/package-manager.js";
-import { SettingsManager } from "./core/settings-manager.js";
+import { selectConfig } from "./cli/config-selector.ts";
+import { createProjectTrustContext } from "./cli/project-trust.ts";
+import { APP_NAME, getAgentDir } from "./config.ts";
+import type { ExtensionFactory } from "./core/extensions/types.ts";
+import { DefaultPackageManager } from "./core/package-manager.ts";
+import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { DefaultResourceLoader } from "./core/resource-loader.ts";
+import { SettingsManager } from "./core/settings-manager.ts";
+import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
@@ -14,6 +19,7 @@ interface PackageCommandOptions {
 	updateTarget?: UpdateTarget;
 	local: boolean;
 	force: boolean;
+	projectTrustOverride?: boolean;
 	help: boolean;
 	invalidOption?: string;
 	invalidArgument?: string;
@@ -34,13 +40,13 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 function getPackageCommandUsage(command: PackageCommand): string {
 	switch (command) {
 		case "install":
-			return `${APP_NAME} install <source> [-l]`;
+			return `${APP_NAME} install <source> [-l] [--approve|--no-approve]`;
 		case "remove":
-			return `${APP_NAME} remove <source> [-l]`;
+			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update`;
+			return `${APP_NAME} update [source|self|pi] [--self] [--extensions] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
-			return `${APP_NAME} list`;
+			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
 }
 
@@ -53,7 +59,9 @@ function printPackageCommandHelp(command: PackageCommand): void {
 Install a package and add it to settings.
 
 Options:
-  -l, --local    Install project-locally (.pi/settings.json)
+  -l, --local       Install project-locally (.pi/settings.json)
+  -a, --approve     Trust project-local files for this command
+  -na, --no-approve Ignore project-local files for this command
 
 Examples:
   ${APP_NAME} install git:github.com/user/repo
@@ -72,7 +80,9 @@ Remove a package and its source from settings.
 Alias: ${APP_NAME} uninstall <source> [-l]
 
 Options:
-  -l, --local    Remove from project settings (.pi/settings.json)
+  -l, --local       Remove from project settings (.pi/settings.json)
+  -a, --approve     Trust project-local files for this command
+  -na, --no-approve Ignore project-local files for this command
 
 Examples:
   ${APP_NAME} remove git:github.com/user/repo
@@ -84,10 +94,21 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Disabled in this fork.
-
-Update reviewed source, then run:
+Update installed git packages. Self-update is disabled in this fork; update reviewed source and run:
   bun run install:local-pi
+
+Options:
+  --self                  Show the fork self-update policy
+  --extensions            Update installed packages only
+  --extension <source>    Update one package only
+  -a, --approve           Trust project-local files for this command
+  -na, --no-approve       Ignore project-local files for this command
+  --force                 Accepted for upstream CLI compatibility; self-update remains disabled
+
+Short forms:
+  ${APP_NAME} update                Update extensions, then report self-update policy
+  ${APP_NAME} update <source>       Update one package
+  ${APP_NAME} update pi             Show the fork self-update policy
 `);
 			return;
 
@@ -96,6 +117,10 @@ Update reviewed source, then run:
   ${getPackageCommandUsage("list")}
 
 List installed packages from user and project settings.
+
+Options:
+  -a, --approve      Trust project-local files for this command
+  -na, --no-approve  Ignore project-local files for this command
 `);
 			return;
 	}
@@ -115,6 +140,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 
 	let local = false;
 	let force = false;
+	let projectTrustOverride: boolean | undefined;
 	let help = false;
 	let invalidOption: string | undefined;
 	let invalidArgument: string | undefined;
@@ -156,6 +182,16 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 			} else {
 				invalidOption = invalidOption ?? arg;
 			}
+			continue;
+		}
+
+		if (arg === "--approve" || arg === "-a") {
+			projectTrustOverride = true;
+			continue;
+		}
+
+		if (arg === "--no-approve" || arg === "-na") {
+			projectTrustOverride = false;
 			continue;
 		}
 
@@ -237,6 +273,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		updateTarget,
 		local,
 		force,
+		projectTrustOverride,
 		help,
 		invalidOption,
 		invalidArgument,
@@ -245,19 +282,110 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	};
 }
 
-function printUpdateDisabled(): void {
-	console.error(chalk.red(`${APP_NAME} update is disabled in this fork.`));
-	console.error(chalk.dim("Update reviewed source, then run: bun run install:local-pi"));
+function updateTargetIncludesSelf(target: UpdateTarget): boolean {
+	return target.type === "all" || target.type === "self";
 }
 
-export async function handleConfigCommand(args: string[]): Promise<boolean> {
+function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
+	return target.type === "all" || target.type === "extensions";
+}
+
+function parseProjectTrustOverride(args: readonly string[]): boolean | undefined {
+	let trustOverride: boolean | undefined;
+	for (const arg of args) {
+		if (arg === "--approve" || arg === "-a") {
+			trustOverride = true;
+		} else if (arg === "--no-approve" || arg === "-na") {
+			trustOverride = false;
+		}
+	}
+	return trustOverride;
+}
+
+export interface PackageCommandRuntimeOptions {
+	extensionFactories?: ExtensionFactory[];
+}
+
+interface CommandSettingsResult {
+	settingsManager: SettingsManager;
+	projectTrustWarnings: string[];
+}
+
+function getCommandAppMode(): AppMode {
+	return process.stdin.isTTY && process.stdout.isTTY ? "interactive" : "print";
+}
+
+function reportProjectTrustWarnings(warnings: readonly string[]): void {
+	for (const warning of warnings) {
+		console.error(chalk.yellow(`Warning: ${warning}`));
+	}
+}
+
+async function createCommandSettingsManager(options: {
+	cwd: string;
+	agentDir: string;
+	projectTrustOverride?: boolean;
+	useSavedProjectTrustOnly?: boolean;
+	extensionFactories?: ExtensionFactory[];
+}): Promise<CommandSettingsResult> {
+	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
+	const projectTrustWarnings: string[] = [];
+	const trustStore = new ProjectTrustStore(options.agentDir);
+	if (options.useSavedProjectTrustOnly) {
+		const savedProjectTrusted = trustStore.get(options.cwd) === true;
+		settingsManager.setProjectTrusted(options.projectTrustOverride ?? savedProjectTrusted);
+		return { settingsManager, projectTrustWarnings };
+	}
+
+	const appMode = getCommandAppMode();
+	const extensionsResult =
+		options.projectTrustOverride === undefined && hasTrustRequiringProjectResources(options.cwd)
+			? await new DefaultResourceLoader({
+					cwd: options.cwd,
+					agentDir: options.agentDir,
+					settingsManager,
+					extensionFactories: options.extensionFactories,
+				}).loadProjectTrustExtensions()
+			: undefined;
+	for (const error of extensionsResult?.errors ?? []) {
+		projectTrustWarnings.push(`Failed to load extension "${error.path}": ${error.error}`);
+	}
+
+	const projectTrusted = await resolveProjectTrusted({
+		cwd: options.cwd,
+		trustStore,
+		trustOverride: options.projectTrustOverride,
+		defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
+		extensionsResult,
+		projectTrustContext: createProjectTrustContext({
+			cwd: options.cwd,
+			mode: appMode,
+			settingsManager,
+			hasUI: appMode === "interactive",
+		}),
+		onExtensionError: (message) => projectTrustWarnings.push(message),
+	});
+	settingsManager.setProjectTrusted(projectTrusted);
+	return { settingsManager, projectTrustWarnings };
+}
+
+export async function handleConfigCommand(
+	args: string[],
+	runtimeOptions: PackageCommandRuntimeOptions = {},
+): Promise<boolean> {
 	if (args[0] !== "config") {
 		return false;
 	}
 
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(cwd, agentDir);
+	const { settingsManager, projectTrustWarnings } = await createCommandSettingsManager({
+		cwd,
+		agentDir,
+		projectTrustOverride: parseProjectTrustOverride(args),
+		extensionFactories: runtimeOptions.extensionFactories,
+	});
+	reportProjectTrustWarnings(projectTrustWarnings);
 	reportSettingsErrors(settingsManager, "config command");
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 	const resolvedPaths = await packageManager.resolve();
@@ -272,7 +400,10 @@ export async function handleConfigCommand(args: string[]): Promise<boolean> {
 	process.exit(0);
 }
 
-export async function handlePackageCommand(args: string[]): Promise<boolean> {
+export async function handlePackageCommand(
+	args: string[],
+	runtimeOptions: PackageCommandRuntimeOptions = {},
+): Promise<boolean> {
 	const options = parsePackageCommand(args);
 	if (!options) {
 		return false;
@@ -280,12 +411,6 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 
 	if (options.help) {
 		printPackageCommandHelp(options.command);
-		return true;
-	}
-
-	if (options.command === "update") {
-		printUpdateDisabled();
-		process.exitCode = 1;
 		return true;
 	}
 
@@ -327,7 +452,20 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(cwd, agentDir);
+	const writesProjectPackageConfig = (options.command === "install" || options.command === "remove") && options.local;
+	const { settingsManager, projectTrustWarnings } = await createCommandSettingsManager({
+		cwd,
+		agentDir,
+		projectTrustOverride: options.projectTrustOverride,
+		useSavedProjectTrustOnly: options.command === "update",
+		extensionFactories: runtimeOptions.extensionFactories,
+	});
+	reportProjectTrustWarnings(projectTrustWarnings);
+	if (!settingsManager.isProjectTrusted() && writesProjectPackageConfig) {
+		console.error(chalk.red("Project is not trusted. Use --approve to modify local package config."));
+		process.exitCode = 1;
+		return true;
+	}
 	reportSettingsErrors(settingsManager, "package command");
 
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
@@ -389,6 +527,25 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 					}
 				}
 
+				return true;
+			}
+
+			case "update": {
+				const target = options.updateTarget ?? { type: "all" };
+				if (updateTargetIncludesExtensions(target)) {
+					const updateSource = target.type === "extensions" ? target.source : undefined;
+					await packageManager.update(updateSource);
+					if (updateSource) {
+						console.log(chalk.green(`Updated ${updateSource}`));
+					} else {
+						console.log(chalk.green("Updated packages"));
+					}
+				}
+				if (updateTargetIncludesSelf(target)) {
+					console.error(chalk.red(`${APP_NAME} self-update is disabled in this fork.`));
+					console.error(chalk.dim("Update reviewed source, then run: bun run install:local-pi"));
+					process.exitCode = 1;
+				}
 				return true;
 			}
 		}

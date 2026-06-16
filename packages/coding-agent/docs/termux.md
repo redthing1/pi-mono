@@ -14,10 +14,13 @@ Pi runs on Android via [Termux](https://termux.dev/), a terminal emulator and Li
 pkg update && pkg upgrade
 
 # Install dependencies
-pkg install nodejs termux-api git
+pkg install bun termux-api git
 
-# Install pi
-npm install -g @earendil-works/pi-coding-agent
+# Install pi from reviewed source
+git clone https://github.com/earendil-works/pi-mono
+cd pi-mono
+bun install --frozen-lockfile --ignore-scripts
+bun run install:local-pi
 
 # Create config directory
 mkdir -p ~/.pi/agent
@@ -36,7 +39,7 @@ Image clipboard is not supported on Termux (the `ctrl+v` image paste feature wil
 
 Create `~/.pi/agent/AGENTS.md` to help the agent understand the Termux environment:
 
-```markdown
+````markdown
 # Agent Environment: Termux on Android
 
 ## Location
@@ -53,7 +56,7 @@ termux-open-url "https://example.com"
 ## Opening Files
 ```bash
 termux-open file.pdf          # Opens with default app
-termux-open -c image.jpg      # Choose app
+termux-open --chooser image.jpg      # Choose app
 ```
 
 ## Clipboard
@@ -91,7 +94,7 @@ termux-camera-photo out.jpg   # Take photo
 - Termux:API app must be installed for `termux-*` commands
 - Use `pkg install termux-api` for the command-line tools
 - Storage permission needed for `/storage/emulated/0` access
-```
+````
 
 ## Limitations
 

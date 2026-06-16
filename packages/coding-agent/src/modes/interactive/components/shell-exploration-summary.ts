@@ -1,5 +1,5 @@
-import { shortenPath } from "../../../core/tools/render-utils.js";
-import { theme } from "../theme/theme.js";
+import { shortenPath } from "../../../core/tools/render-utils.ts";
+import { theme } from "../theme/theme.ts";
 
 const SEARCH_COMMANDS = new Set(["ack", "ag", "egrep", "fgrep", "grep", "pt", "rg", "rga", "ripgrep-all"]);
 const FIND_COMMANDS = new Set(["fd", "fdfind", "find"]);

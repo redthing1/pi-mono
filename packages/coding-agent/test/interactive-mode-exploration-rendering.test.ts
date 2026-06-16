@@ -2,11 +2,11 @@ import { getModel, type Usage } from "@earendil-works/pi-ai";
 import { Container } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import type { SessionContext } from "../src/core/session-manager.js";
-import type { ExplorationGroupComponent } from "../src/modes/interactive/components/exploration-group.js";
-import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
-import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.js";
+import type { SessionContext } from "../src/core/session-manager.ts";
+import type { ExplorationGroupComponent } from "../src/modes/interactive/components/exploration-group.ts";
+import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const model = getModel("anthropic", "claude-sonnet-4-5");
 
@@ -164,6 +164,7 @@ describe("InteractiveMode exploration rendering", () => {
 			],
 		};
 		privateMethods.renderSessionContext.call(harness, sessionContext);
+		privateMethods.setToolsExpanded.call(harness, true);
 
 		const rendered = renderChat(harness.chatContainer);
 		expect(rendered).not.toContain("Explored");

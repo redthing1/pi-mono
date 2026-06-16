@@ -4,16 +4,18 @@ Pi is a minimal terminal coding harness. It is designed to stay small at the cor
 
 ## Quick start
 
-On linux or mac you can install Pi with curl:
+Install Pi from a reviewed source checkout:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+git clone https://github.com/redthing1/pi-mono
+cd pi-mono
+bun run install:local-pi
 ```
 
-Or alternatively with npm:
+To uninstall pi itself:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent
+bun uninstall -g @earendil-works/pi-coding-agent
 ```
 
 Then run it in a project directory:
@@ -31,6 +33,8 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Quickstart](quickstart.md) - install, authenticate, and run a first session.
 - [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.
+- [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
+- [Containerization](containerization.md) - sandbox pi with OpenShell, Gondolin, or Docker.
 - [Settings](settings.md) - global and project settings.
 - [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
 - [Sessions](sessions.md) - session management, branching, and tree navigation.

@@ -2,13 +2,28 @@
 
 This page gets you from install to a useful first pi session.
 
-## Install
+## Install From Source
 
-Pi is distributed as an npm package:
+The trusted install path for this fork is a reviewed source checkout:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent
+git clone https://github.com/redthing1/pi-mono
+cd pi-mono
+bun run install:local-pi
 ```
+
+The install script uses the committed Bun lockfile, builds the workspaces, and links the global `pi` binary from this checkout.
+
+### Uninstall
+
+Use the package manager that installed pi:
+
+```bash
+# Bun
+bun uninstall -g @earendil-works/pi-coding-agent
+```
+
+Uninstalling pi leaves settings, credentials, sessions, and installed pi packages in `~/.pi/agent/`.
 
 Then start pi in the project directory you want it to work on:
 
@@ -68,7 +83,7 @@ Pi loads context files at startup. Add an `AGENTS.md` file to tell it how to wor
 ```markdown
 # Project Instructions
 
-- Run `npm run check` after code changes.
+- Run `bun run check` after code changes.
 - Do not run production migrations locally.
 - Keep responses concise.
 ```
@@ -98,7 +113,7 @@ Images can be pasted with Ctrl+V (Alt+V on Windows) or dragged into supported te
 In interactive mode:
 
 ```text
-!npm run lint
+!bun run lint
 ```
 
 The command output is sent to the model. Use `!!command` to run a command without adding its output to the model context.
@@ -114,6 +129,7 @@ Sessions are saved automatically:
 ```bash
 pi -c                  # Continue most recent session
 pi -r                  # Browse previous sessions
+pi --name "my task"    # Set session display name at startup
 pi --session <path|id> # Open a specific session
 ```
 

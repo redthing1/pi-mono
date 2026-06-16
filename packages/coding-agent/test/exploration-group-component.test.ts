@@ -4,10 +4,10 @@ import { beforeAll, describe, expect, test } from "vitest";
 import {
 	ExplorationGroupComponent,
 	isExplorationToolSnapshot,
-} from "../src/modes/interactive/components/exploration-group.js";
-import { formatBashExplorationSummary } from "../src/modes/interactive/components/shell-exploration-summary.js";
-import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
-import { initTheme } from "../src/modes/interactive/theme/theme.js";
+} from "../src/modes/interactive/components/exploration-group.ts";
+import { formatBashExplorationSummary } from "../src/modes/interactive/components/shell-exploration-summary.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function createFakeTui(): TUI {
 	return {

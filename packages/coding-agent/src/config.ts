@@ -1,9 +1,8 @@
-import { spawnSync } from "child_process";
-import { accessSync, constants, existsSync, readFileSync, realpathSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { basename, dirname, join, resolve, sep, win32 } from "path";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import { shouldUseWindowsShell } from "./utils/child-process.js";
+import { normalizePath } from "./utils/paths.ts";
 
 // =============================================================================
 // Package Detection
@@ -28,34 +27,11 @@ export const isBunRuntime = !!process.versions.bun;
 
 export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
-interface SelfUpdateCommandStep {
+export interface SelfUpdateCommand {
 	command: string;
 	args: string[];
 	display: string;
-}
-
-export interface SelfUpdateCommand extends SelfUpdateCommandStep {
-	steps?: SelfUpdateCommandStep[];
-}
-
-function makeSelfUpdateCommand(
-	installStep: SelfUpdateCommandStep,
-	uninstallStep?: SelfUpdateCommandStep,
-): SelfUpdateCommand {
-	if (!uninstallStep) return installStep;
-	return {
-		...installStep,
-		display: `${uninstallStep.display} && ${installStep.display}`,
-		steps: [uninstallStep, installStep],
-	};
-}
-
-function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateCommandStep {
-	return {
-		command,
-		args,
-		display: [command, ...args].map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(" "),
-	};
+	steps?: SelfUpdateCommand[];
 }
 
 export function detectInstallMethod(): InstallMethod {
@@ -81,213 +57,24 @@ export function detectInstallMethod(): InstallMethod {
 	return "unknown";
 }
 
-function getInferredNpmInstall(): { root: string; prefix: string } | undefined {
-	const packageDir = getPackageDir();
-	const path = process.platform === "win32" || packageDir.includes("\\") ? win32 : { basename, dirname };
-	const parent = path.dirname(packageDir);
-	let root: string | undefined;
-	if (path.basename(parent).startsWith("@") && path.basename(path.dirname(parent)) === "node_modules") {
-		root = path.dirname(parent);
-	} else if (path.basename(parent) === "node_modules") {
-		root = parent;
-	}
-	if (!root) return undefined;
-	const rootParent = path.dirname(root);
-	if (path.basename(rootParent) === "lib") return { root, prefix: path.dirname(rootParent) };
-	// Windows global npm prefixes use `<prefix>\\node_modules`, which is
-	// indistinguishable from local project installs by path shape alone. Do not
-	// infer unsupported Windows custom prefixes without `npm root -g` evidence.
-	return undefined;
-}
-
-function getSelfUpdateCommandForMethod(
-	method: InstallMethod,
-	installedPackageName: string,
-	updatePackageName = installedPackageName,
-	npmCommand?: string[],
-): SelfUpdateCommand | undefined {
-	switch (method) {
-		case "bun-binary":
-			return undefined;
-		case "pnpm":
-			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("pnpm", ["install", "-g", updatePackageName]),
-				updatePackageName === installedPackageName
-					? undefined
-					: makeSelfUpdateCommandStep("pnpm", ["remove", "-g", installedPackageName]),
-			);
-		case "yarn":
-			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("yarn", ["global", "add", updatePackageName]),
-				updatePackageName === installedPackageName
-					? undefined
-					: makeSelfUpdateCommandStep("yarn", ["global", "remove", installedPackageName]),
-			);
-		case "bun":
-			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("bun", ["install", "-g", updatePackageName]),
-				updatePackageName === installedPackageName
-					? undefined
-					: makeSelfUpdateCommandStep("bun", ["uninstall", "-g", installedPackageName]),
-			);
-		case "npm": {
-			const [command = "npm", ...npmArgs] = npmCommand ?? [];
-			const inferred = npmCommand?.length ? undefined : getInferredNpmInstall();
-			const prefixArgs = [...npmArgs, ...(inferred ? ["--prefix", inferred.prefix] : [])];
-			const installStep = makeSelfUpdateCommandStep(command, [...prefixArgs, "install", "-g", updatePackageName]);
-			const uninstallStep =
-				updatePackageName === installedPackageName
-					? undefined
-					: makeSelfUpdateCommandStep(command, [...prefixArgs, "uninstall", "-g", installedPackageName]);
-			return makeSelfUpdateCommand(installStep, uninstallStep);
-		}
-		case "unknown":
-			return undefined;
-	}
-}
-
-function readCommandOutput(
-	command: string,
-	args: string[],
-	options: { requireSuccess?: boolean } = {},
-): string | undefined {
-	const result = spawnSync(command, args, {
-		encoding: "utf-8",
-		stdio: ["ignore", "pipe", "pipe"],
-		shell: shouldUseWindowsShell(command),
-	});
-	if (result.status === 0) return result.stdout.trim() || undefined;
-	if (options.requireSuccess) {
-		const reason = result.error?.message || result.stderr.trim() || `exit code ${result.status ?? "unknown"}`;
-		throw new Error(`Failed to run ${[command, ...args].join(" ")}: ${reason}`);
-	}
-	return undefined;
-}
-
-function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmCommand?: string[]): string[] {
-	switch (method) {
-		case "npm": {
-			const configured = !!npmCommand?.length;
-			const [command = "npm", ...npmArgs] = npmCommand ?? [];
-			if (configured && command === "bun") {
-				const bunBin = readCommandOutput(command, [...npmArgs, "pm", "bin", "-g"], {
-					requireSuccess: true,
-				});
-				const roots = [join(homedir(), ".bun", "install", "global", "node_modules")];
-				if (bunBin) {
-					roots.push(join(dirname(bunBin), "install", "global", "node_modules"));
-				}
-				return roots;
-			}
-			const root = readCommandOutput(command, [...npmArgs, "root", "-g"], {
-				requireSuccess: configured,
-			});
-			const inferred = configured ? undefined : getInferredNpmInstall();
-			return [root, inferred?.root].filter((x): x is string => !!x);
-		}
-		case "pnpm": {
-			const root = readCommandOutput("pnpm", ["root", "-g"]);
-			return root ? [root, dirname(root)] : [];
-		}
-		case "yarn": {
-			const dir = readCommandOutput("yarn", ["global", "dir"]);
-			return dir ? [dir, join(dir, "node_modules")] : [];
-		}
-		case "bun": {
-			const bunBin = readCommandOutput("bun", ["pm", "bin", "-g"]);
-			const roots = [join(homedir(), ".bun", "install", "global", "node_modules")];
-			if (bunBin) {
-				roots.push(join(dirname(bunBin), "install", "global", "node_modules"));
-			}
-			return roots;
-		}
-		case "bun-binary":
-		case "unknown":
-			return [];
-	}
-}
-
-function normalizeExistingPathForComparison(path: string): string | undefined {
-	const resolvedPath = resolve(path);
-	if (!existsSync(resolvedPath)) {
-		return undefined;
-	}
-	let normalizedPath: string;
-	try {
-		normalizedPath = realpathSync(resolvedPath);
-	} catch {
-		return undefined;
-	}
-	if (process.platform === "win32") {
-		normalizedPath = normalizedPath.toLowerCase();
-	}
-	return normalizedPath;
-}
-
-function isSelfUpdatePathWritable(): boolean {
-	const packageDir = getPackageDir();
-	try {
-		accessSync(packageDir, constants.W_OK);
-		accessSync(dirname(packageDir), constants.W_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function isManagedByGlobalPackageManager(method: InstallMethod, packageName: string, npmCommand?: string[]): boolean {
-	const packageDir = normalizeExistingPathForComparison(getPackageDir());
-	return (
-		!!packageDir &&
-		getGlobalPackageRoots(method, packageName, npmCommand).some((root) => {
-			const normalizedRoot = normalizeExistingPathForComparison(root);
-			return (
-				!!normalizedRoot &&
-				packageDir.startsWith(normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`)
-			);
-		})
-	);
-}
-
 export function getSelfUpdateCommand(
-	packageName: string,
-	npmCommand?: string[],
-	updatePackageName = packageName,
+	_packageName: string,
+	_npmCommand?: string[],
+	_updatePackageName = _packageName,
 ): SelfUpdateCommand | undefined {
-	const method = detectInstallMethod();
-	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
-	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
-		return undefined;
-	}
-	return command;
+	return undefined;
 }
 
 export function getSelfUpdateUnavailableInstruction(
-	packageName: string,
-	npmCommand?: string[],
-	updatePackageName = packageName,
+	_packageName: string,
+	_npmCommand?: string[],
+	_updatePackageName = _packageName,
 ): string {
-	const method = detectInstallMethod();
-	if (method === "bun-binary") {
-		return `Download from: https://github.com/earendil-works/pi-mono/releases/latest`;
-	}
-	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageName, npmCommand);
-	if (command) {
-		if (isManagedByGlobalPackageManager(method, packageName, npmCommand) && !isSelfUpdatePathWritable()) {
-			return `This installation is managed by a global ${method} install, but the install path is not writable. Update it yourself with: ${command.display}`;
-		}
-		return `This installation is not managed by a global ${method} install. Update it with the package manager, wrapper, or source checkout that provides it.`;
-	}
-	return `Update ${updatePackageName} using the package manager, wrapper, or source checkout that provides this installation.`;
+	return "Self-update is disabled in this fork. Update reviewed source, then run: bun run install:local-pi";
 }
 
-export function getUpdateInstruction(packageName: string): string {
-	const method = detectInstallMethod();
-	const command = getSelfUpdateCommandForMethod(method, packageName);
-	if (command) {
-		return `Run: ${command.display}`;
-	}
-	return getSelfUpdateUnavailableInstruction(packageName);
+export function getUpdateInstruction(_packageName: string): string {
+	return "Run from reviewed source: bun run install:local-pi";
 }
 
 // =============================================================================
@@ -304,9 +91,7 @@ export function getPackageDir(): string {
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
 	const envDir = process.env.PI_PACKAGE_DIR;
 	if (envDir) {
-		if (envDir === "~") return homedir();
-		if (envDir.startsWith("~/")) return homedir() + envDir.slice(1);
-		return envDir;
+		return normalizePath(envDir);
 	}
 
 	if (isBunBinary) {
@@ -414,7 +199,13 @@ interface PackageJson {
 	};
 }
 
-const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+let pkg: PackageJson = {};
+try {
+	pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
+} catch (e: unknown) {
+	const err = e as NodeJS.ErrnoException;
+	if (err.code !== "ENOENT") throw e;
+}
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
@@ -428,9 +219,7 @@ export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
 
 export function expandTildePath(path: string): string {
-	if (path === "~") return homedir();
-	if (path.startsWith("~/")) return homedir() + path.slice(1);
-	return path;
+	return normalizePath(path);
 }
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
