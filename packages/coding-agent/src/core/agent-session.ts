@@ -79,7 +79,7 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
+import type { BashExecutionMessage, CustomMessage, SkillInvocation } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -238,6 +238,11 @@ export interface SessionStats {
 	};
 	cost: number;
 	contextUsage?: ContextUsage;
+}
+
+interface SkillReferenceExpansion {
+	text: string;
+	skillInvocations: SkillInvocation[];
 }
 
 interface ToolDefinitionEntry {
@@ -1033,10 +1038,12 @@ export class AgentSession {
 			}
 
 			// Expand skill commands (/skill:name args) and prompt templates (/template args)
-			let expandedText = currentText;
+			let promptText = currentText;
+			let skillInvocations: SkillInvocation[] = [];
 			if (expandPromptTemplates) {
-				expandedText = this._expandSkillReferences(expandedText);
-				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+				const expanded = this._expandSkillReferences(promptText);
+				promptText = expandPromptTemplate(expanded.text, [...this.promptTemplates]);
+				skillInvocations = expanded.skillInvocations;
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
@@ -1047,9 +1054,9 @@ export class AgentSession {
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(promptText, currentImages, skillInvocations);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(promptText, currentImages, skillInvocations);
 				}
 				preflightResult?.(true);
 				return;
@@ -1092,7 +1099,7 @@ export class AgentSession {
 			messages = [];
 
 			// Add user message
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
+			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: promptText }];
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
@@ -1100,6 +1107,7 @@ export class AgentSession {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
+				...(skillInvocations.length > 0 && { skillInvocations }),
 			});
 
 			// Inject any pending "nextTurn" messages as context alongside the user message
@@ -1110,7 +1118,7 @@ export class AgentSession {
 
 			// Emit before_agent_start extension event
 			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
+				promptText,
 				currentImages,
 				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
@@ -1183,6 +1191,16 @@ export class AgentSession {
 		return `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
 	}
 
+	private _buildSkillInvocation(skill: Skill): SkillInvocation {
+		const content = readFileSync(skill.filePath, "utf-8");
+		const body = stripFrontmatter(content).trim();
+		return {
+			name: skill.name,
+			location: skill.filePath,
+			instructions: `References are relative to ${skill.baseDir}.\n\n${body}`,
+		};
+	}
+
 	private _emitSkillExpansionError(skill: Skill, err: unknown): void {
 		this._extensionRunner.emitError({
 			extensionPath: skill.filePath,
@@ -1215,15 +1233,15 @@ export class AgentSession {
 		}
 	}
 
-	private _expandInlineSkillMentions(text: string): string {
-		if (!text.includes("$")) return text;
+	private _collectInlineSkillMentions(text: string): SkillInvocation[] {
+		if (!text.includes("$")) return [];
 
 		const skills = this.resourceLoader.getSkills().skills;
-		if (skills.length === 0) return text;
+		if (skills.length === 0) return [];
 
 		const skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
 		const seenSkillNames = new Set<string>();
-		const skillBlocks: string[] = [];
+		const skillInvocations: SkillInvocation[] = [];
 		for (const match of text.matchAll(INLINE_SKILL_MENTION_REGEX)) {
 			const skillName = match[2];
 			if (!skillName || seenSkillNames.has(skillName)) {
@@ -1235,21 +1253,24 @@ export class AgentSession {
 			}
 			seenSkillNames.add(skillName);
 			try {
-				skillBlocks.push(this._buildSkillBlock(skill));
+				skillInvocations.push(this._buildSkillInvocation(skill));
 			} catch (err) {
 				this._emitSkillExpansionError(skill, err);
 			}
 		}
 
-		return skillBlocks.length > 0 ? `${skillBlocks.join("\n\n")}\n\n${text}` : text;
+		return skillInvocations;
 	}
 
-	private _expandSkillReferences(text: string): string {
+	private _expandSkillReferences(text: string): SkillReferenceExpansion {
 		const expandedCommand = this._expandSkillCommand(text);
 		if (expandedCommand !== text) {
-			return expandedCommand;
+			return { text: expandedCommand, skillInvocations: [] };
 		}
-		return this._expandInlineSkillMentions(text);
+		return {
+			text,
+			skillInvocations: this._collectInlineSkillMentions(text),
+		};
 	}
 
 	/**
@@ -1267,10 +1288,10 @@ export class AgentSession {
 		}
 
 		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillReferences(text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		const expanded = this._expandSkillReferences(text);
+		const expandedText = expandPromptTemplate(expanded.text, [...this.promptTemplates]);
 
-		await this._queueSteer(expandedText, images);
+		await this._queueSteer(expandedText, images, expanded.skillInvocations);
 	}
 
 	/**
@@ -1287,16 +1308,20 @@ export class AgentSession {
 		}
 
 		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillReferences(text);
-		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		const expanded = this._expandSkillReferences(text);
+		const expandedText = expandPromptTemplate(expanded.text, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images);
+		await this._queueFollowUp(expandedText, images, expanded.skillInvocations);
 	}
 
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		skillInvocations: SkillInvocation[] = [],
+	): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1307,13 +1332,18 @@ export class AgentSession {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			...(skillInvocations.length > 0 && { skillInvocations }),
 		});
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private async _queueFollowUp(
+		text: string,
+		images?: ImageContent[],
+		skillInvocations: SkillInvocation[] = [],
+	): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1324,6 +1354,7 @@ export class AgentSession {
 			role: "user",
 			content,
 			timestamp: Date.now(),
+			...(skillInvocations.length > 0 && { skillInvocations }),
 		});
 	}
 
