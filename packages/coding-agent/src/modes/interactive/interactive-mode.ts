@@ -496,6 +496,7 @@ export class InteractiveMode {
 		}
 
 		return {
+			triggerCharacters: [...(current.triggerCharacters ?? []), "$"],
 			getSuggestions: async (lines, cursorLine, cursorCol, options) => {
 				const currentLine = lines[cursorLine] ?? "";
 				const textBeforeCursor = currentLine.slice(0, cursorCol);
