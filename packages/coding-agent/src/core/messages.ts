@@ -66,6 +66,18 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface SkillInvocation {
+	name: string;
+	location: string;
+	instructions: string;
+}
+
+declare module "@earendil-works/pi-ai" {
+	interface UserMessage {
+		skillInvocations?: SkillInvocation[];
+	}
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
@@ -117,6 +129,10 @@ export function createCompactionSummaryMessage(
 		tokensBefore,
 		timestamp: new Date(timestamp).getTime(),
 	};
+}
+
+export function skillInvocationToText(invocation: SkillInvocation): string {
+	return `<skill name="${invocation.name}" location="${invocation.location}">\n${invocation.instructions}\n</skill>`;
 }
 
 /** Convert CustomMessageEntry to AgentMessage format */
@@ -181,7 +197,23 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					};
-				case "user":
+				case "user": {
+					if (!m.skillInvocations || m.skillInvocations.length === 0) {
+						return m;
+					}
+					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+					return {
+						role: "user",
+						content: [
+							{
+								type: "text" as const,
+								text: m.skillInvocations.map(skillInvocationToText).join("\n\n"),
+							},
+							...content,
+						],
+						timestamp: m.timestamp,
+					};
+				}
 				case "assistant":
 				case "toolResult":
 					return m;
