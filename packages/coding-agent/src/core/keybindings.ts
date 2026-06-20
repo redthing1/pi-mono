@@ -62,6 +62,8 @@ declare module "@earendil-works/pi-tui" {
 	interface Keybindings extends AppKeybindings {}
 }
 
+const IS_TMUX_SESSION = process.env.TMUX !== undefined || process.env.TMUX_PANE !== undefined;
+
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
@@ -102,7 +104,7 @@ export const KEYBINDINGS = {
 		description: "Queue follow-up message",
 	},
 	"app.message.dequeue": {
-		defaultKeys: "alt+up",
+		defaultKeys: IS_TMUX_SESSION ? "shift+left" : "alt+up",
 		description: "Restore queued messages",
 	},
 	"app.clipboard.pasteImage": {
