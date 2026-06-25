@@ -1864,6 +1864,7 @@ export class InteractiveMode {
 			model: this.session.model,
 			isIdle: () => !this.session.isStreaming,
 			isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
+			privacy: this.session.privacy,
 			signal: this.session.agent.signal,
 			abort: () => {
 				this.restoreQueuedMessagesToEditor({ abort: true });
@@ -3816,6 +3817,10 @@ export class InteractiveMode {
 	}
 
 	private async openExternalEditor(): Promise<void> {
+		if (this.session.privacy.clientZdr) {
+			this.showWarning("External editor is disabled in ZDR mode.");
+			return;
+		}
 		// Determine editor (respect $VISUAL, then $EDITOR)
 		const editorCmd = process.env.VISUAL || process.env.EDITOR;
 		if (!editorCmd) {
@@ -5397,6 +5402,10 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
+		if (this.session.privacy.clientZdr) {
+			this.showError("Share is disabled in ZDR mode.");
+			return;
+		}
 		// Check if gh is available and logged in
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
@@ -5733,6 +5742,10 @@ export class InteractiveMode {
 	}
 
 	private handleDebugCommand(): void {
+		if (this.session.privacy.clientZdr) {
+			this.showError("/debug is disabled in ZDR mode.");
+			return;
+		}
 		const width = this.ui.terminal.columns;
 		const height = this.ui.terminal.rows;
 		const allLines = this.ui.render(width);

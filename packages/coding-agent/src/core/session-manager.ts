@@ -5,11 +5,13 @@ import {
 	appendFileSync,
 	closeSync,
 	createReadStream,
+	type Dirent,
 	existsSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
 	readSync,
+	rmdirSync,
 	statSync,
 	writeFileSync,
 } from "fs";
@@ -443,11 +445,41 @@ function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgen
 }
 
 export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
-	const sessionDir = getDefaultSessionDirPath(cwd, agentDir);
-	if (!existsSync(sessionDir)) {
-		mkdirSync(sessionDir, { recursive: true });
-	}
-	return sessionDir;
+	return getDefaultSessionDirPath(cwd, agentDir);
+}
+
+export function pruneEmptySessionDirs(sessionRoot: string): void {
+	const root = normalizePath(sessionRoot);
+	if (!existsSync(root)) return;
+
+	const prune = (dir: string): boolean => {
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return false;
+		}
+
+		let hasRemainingEntry = false;
+		for (const entry of entries) {
+			const path = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				if (!prune(path)) hasRemainingEntry = true;
+			} else {
+				hasRemainingEntry = true;
+			}
+		}
+
+		if (dir === root || hasRemainingEntry) return false;
+		try {
+			rmdirSync(dir);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	prune(root);
 }
 
 const SESSION_READ_BUFFER_SIZE = 1024 * 1024;

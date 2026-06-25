@@ -151,6 +151,7 @@ const ModelDefinitionSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
+	zdr: Type.Optional(Type.Boolean()),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
@@ -171,6 +172,7 @@ const ModelDefinitionSchema = Type.Object({
 // Schema for per-model overrides (all fields optional, merged with built-in model)
 const ModelOverrideSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
+	zdr: Type.Optional(Type.Boolean()),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
@@ -195,6 +197,7 @@ const ProviderConfigSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
+	zdr: Type.Optional(Type.Boolean()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(ProviderCompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
@@ -227,6 +230,7 @@ function formatValidationPath(error: TLocalizedValidationError): string {
 interface ProviderOverride {
 	baseUrl?: string;
 	compat?: Model<Api>["compat"];
+	zdr?: boolean;
 }
 
 interface ProviderRequestConfig {
@@ -300,6 +304,7 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 
 	// Simple field overrides
 	if (override.name !== undefined) result.name = override.name;
+	if (override.zdr !== undefined) result.zdr = override.zdr;
 	if (override.reasoning !== undefined) result.reasoning = override.reasoning;
 	if (override.thinkingLevelMap !== undefined) {
 		result.thinkingLevelMap = { ...model.thinkingLevelMap, ...override.thinkingLevelMap };
@@ -425,6 +430,7 @@ export class ModelRegistry {
 					model = {
 						...model,
 						baseUrl: providerOverride.baseUrl ?? model.baseUrl,
+						zdr: providerOverride.zdr ?? model.zdr,
 						compat: mergeCompat(model.compat, providerOverride.compat),
 					};
 				}
@@ -481,10 +487,11 @@ export class ModelRegistry {
 			const modelOverrides = new Map<string, Map<string, ModelOverride>>();
 
 			for (const [providerName, providerConfig] of Object.entries(config.providers)) {
-				if (providerConfig.baseUrl || providerConfig.compat) {
+				if (providerConfig.baseUrl || providerConfig.compat || providerConfig.zdr !== undefined) {
 					overrides.set(providerName, {
 						baseUrl: providerConfig.baseUrl,
 						compat: providerConfig.compat,
+						zdr: providerConfig.zdr,
 					});
 				}
 
@@ -521,9 +528,15 @@ export class ModelRegistry {
 
 			if (models.length === 0) {
 				// Override-only config: needs baseUrl, headers, compat, modelOverrides, or some combination.
-				if (!providerConfig.baseUrl && !providerConfig.headers && !providerConfig.compat && !hasModelOverrides) {
+				if (
+					!providerConfig.baseUrl &&
+					!providerConfig.headers &&
+					!providerConfig.compat &&
+					providerConfig.zdr === undefined &&
+					!hasModelOverrides
+				) {
 					throw new Error(
-						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "modelOverrides", or "models".`,
+						`Provider ${providerName}: must specify "baseUrl", "headers", "compat", "zdr", "modelOverrides", or "models".`,
 					);
 				}
 			} else if (!isBuiltIn) {
@@ -597,6 +610,7 @@ export class ModelRegistry {
 					api: api as Api,
 					provider: providerName,
 					baseUrl,
+					zdr: modelDef.zdr ?? providerConfig.zdr,
 					reasoning: modelDef.reasoning ?? false,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: (modelDef.input ?? ["text"]) as ("text" | "image")[],
@@ -626,6 +640,12 @@ export class ModelRegistry {
 	 */
 	getAvailable(): Model<Api>[] {
 		return this.models.filter((m) => this.hasConfiguredAuth(m));
+	}
+
+	isZdrModel(model: Model<Api>): boolean {
+		if (model.zdr === true) return true;
+		const compat = model.compat as OpenAICompletionsCompat | undefined;
+		return compat?.openRouterRouting?.zdr === true;
 	}
 
 	/**
@@ -899,6 +919,7 @@ export class ModelRegistry {
 					api: api as Api,
 					provider: providerName,
 					baseUrl: modelDef.baseUrl ?? config.baseUrl!,
+					zdr: modelDef.zdr ?? config.zdr,
 					reasoning: modelDef.reasoning,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: modelDef.input as ("text" | "image")[],
@@ -917,13 +938,14 @@ export class ModelRegistry {
 					this.models = config.oauth.modifyModels(this.models, cred);
 				}
 			}
-		} else if (config.baseUrl || config.headers) {
+		} else if (config.baseUrl || config.headers || config.zdr !== undefined) {
 			// Override-only: update baseUrl for existing models. Request headers are resolved per request.
 			this.models = this.models.map((m) => {
 				if (m.provider !== providerName) return m;
 				return {
 					...m,
 					baseUrl: config.baseUrl ?? m.baseUrl,
+					zdr: config.zdr ?? m.zdr,
 				};
 			});
 		}
@@ -938,6 +960,7 @@ export interface ProviderConfigInput {
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;
+	zdr?: boolean;
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
@@ -948,6 +971,7 @@ export interface ProviderConfigInput {
 		name: string;
 		api?: Api;
 		baseUrl?: string;
+		zdr?: boolean;
 		reasoning: boolean;
 		thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 		input: ("text" | "image")[];

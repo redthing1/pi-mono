@@ -11,6 +11,12 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
+import {
+	mergePrivacyMode,
+	type PrivacyMode,
+	ZDR_MODEL_REQUIRED_MESSAGE,
+	ZDR_MODEL_UNAVAILABLE_MESSAGE,
+} from "./privacy.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -77,6 +83,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Session manager. Default: SessionManager.create(cwd) */
 	sessionManager?: SessionManager;
+	/** Privacy controls for local session persistence and remote provider eligibility. */
+	privacy?: Partial<PrivacyMode>;
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
@@ -177,7 +185,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+	const privacy = mergePrivacyMode(options.privacy);
+	const sessionManager =
+		options.sessionManager ??
+		(privacy.clientZdr
+			? SessionManager.inMemory(cwd)
+			: SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir)));
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
@@ -203,6 +216,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		model = undefined;
 	}
 
+	let scopedModelsForSelection = options.scopedModels ?? [];
+	if (privacy.remoteZdr) {
+		scopedModelsForSelection = scopedModelsForSelection.filter((scoped) => modelRegistry.isZdrModel(scoped.model));
+		if (scopedModelsForSelection.length === 0 && !hasExistingSession && !model) {
+			scopedModelsForSelection = (await modelRegistry.getAvailable())
+				.filter((availableModel) => modelRegistry.isZdrModel(availableModel))
+				.map((availableModel) => ({ model: availableModel }));
+		}
+	}
+
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
 		const savedModelRef = `${existingSession.model.provider}/${existingSession.model.modelId}`;
@@ -221,20 +244,28 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
-		const result = await findInitialModel({
-			scopedModels: options.scopedModels ?? [],
-			isContinuing: hasExistingSession,
-			providerScope,
-			defaultProvider: settingsManager.getDefaultProvider(),
-			defaultModelId: settingsManager.getDefaultModel(),
-			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
-			modelRegistry,
-		});
+		const result =
+			privacy.remoteZdr && scopedModelsForSelection.length === 0
+				? {
+						model: undefined,
+						fallbackMessage: ZDR_MODEL_UNAVAILABLE_MESSAGE,
+					}
+				: await findInitialModel({
+						scopedModels: scopedModelsForSelection,
+						isContinuing: hasExistingSession,
+						providerScope,
+						defaultProvider: privacy.remoteZdr ? undefined : settingsManager.getDefaultProvider(),
+						defaultModelId: privacy.remoteZdr ? undefined : settingsManager.getDefaultModel(),
+						defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+						modelRegistry,
+					});
 		model = result.model;
 		if (!model) {
-			modelFallbackMessage = providerScope
-				? `${modelFallbackMessage ? `${modelFallbackMessage}. ` : ""}No authenticated models available for provider "${providerScope}". Provider scope prevents fallback to another provider.`
-				: formatNoModelsAvailableMessage();
+			modelFallbackMessage =
+				result.fallbackMessage ??
+				(providerScope
+					? `${modelFallbackMessage ? `${modelFallbackMessage}. ` : ""}No authenticated models available for provider "${providerScope}". Provider scope prevents fallback to another provider.`
+					: formatNoModelsAvailableMessage());
 		} else if (modelFallbackMessage) {
 			modelFallbackMessage += providerScope
 				? `. Provider scope "${providerScope}" is active; using ${model.provider}/${model.id}`
@@ -260,6 +291,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
+		if (privacy.remoteZdr && !modelRegistry.isZdrModel(model)) {
+			throw new Error(ZDR_MODEL_REQUIRED_MESSAGE);
+		}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
@@ -409,6 +443,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		privacy,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

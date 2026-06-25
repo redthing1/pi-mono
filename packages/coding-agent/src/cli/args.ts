@@ -23,6 +23,7 @@ export interface Args {
 	mode?: Mode;
 	name?: string;
 	noSession?: boolean;
+	zdr?: boolean;
 	session?: string;
 	sessionId?: string;
 	fork?: string;
@@ -101,7 +102,10 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.diagnostics.push({ type: "error", message: "--name requires a value" });
 			}
-		} else if (arg === "--no-session" || arg === "--zdr") {
+		} else if (arg === "--zdr") {
+			result.noSession = true;
+			result.zdr = true;
+		} else if (arg === "--no-session" || arg === "--zdr-client") {
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
@@ -247,7 +251,8 @@ ${chalk.bold("Options:")}
   --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
-  --no-session, --zdr            Don't save session (client-side ephemeral)
+  --zdr                         Zero-data-retention mode
+  --no-session, --zdr-client    Don't save session locally
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching

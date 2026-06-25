@@ -16,6 +16,7 @@ export interface ResolveProjectTrustedOptions {
 	trustOverride?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust;
 	extensionsResult?: LoadExtensionsResult;
+	remember?: boolean;
 	projectTrustContext: ProjectTrustContext;
 	onExtensionError?: (message: string) => void;
 }
@@ -61,7 +62,7 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 		}
 		if (result) {
 			const trusted = result.trusted === "yes";
-			if (result.remember === true) {
+			if (result.remember === true && options.remember !== false) {
 				options.trustStore.set(options.cwd, trusted);
 			}
 			return trusted;
@@ -88,7 +89,9 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 
 	const selected = await selectProjectTrustOption(options.cwd, options.projectTrustContext);
 	if (selected !== undefined) {
-		saveProjectTrustPromptResult(options.trustStore, selected);
+		if (options.remember !== false) {
+			saveProjectTrustPromptResult(options.trustStore, selected);
+		}
 		return selected.trusted;
 	}
 	return false;

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import triggerCompactExtension from "../examples/extensions/trigger-compact.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "../src/core/extensions/index.ts";
+import { DEFAULT_PRIVACY_MODE } from "../src/core/privacy.ts";
 
 function createContext(tokens: number | null, compact = vi.fn()): ExtensionContext {
 	return {
@@ -13,6 +14,7 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		model: undefined,
 		isIdle: () => true,
 		isProjectTrusted: () => true,
+		privacy: DEFAULT_PRIVACY_MODE,
 		signal: undefined,
 		abort: vi.fn(),
 		hasPendingMessages: () => false,

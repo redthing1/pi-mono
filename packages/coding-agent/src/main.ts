@@ -15,7 +15,7 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import { ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import { ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, getSessionsDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -30,6 +30,12 @@ import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import type { ModelRegistry } from "./core/model-registry.ts";
 import { resolveCliModel, resolveCliProvider, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import {
+	mergePrivacyMode,
+	type PrivacyMode,
+	ZDR_EXPORT_DISABLED_MESSAGE,
+	ZDR_MODEL_REQUIRED_MESSAGE,
+} from "./core/privacy.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -38,7 +44,7 @@ import {
 	MissingSessionCwdError,
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
-import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { assertValidSessionId, pruneEmptySessionDirs, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -442,6 +448,28 @@ function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | u
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
+function privacyModeFromArgs(parsed: Args): PrivacyMode {
+	return mergePrivacyMode({
+		clientZdr: parsed.noSession === true || parsed.zdr === true,
+		remoteZdr: parsed.zdr === true,
+	});
+}
+
+function validatePrivacyFlags(parsed: Args): void {
+	if (parsed.export && parsed.zdr) {
+		console.error(chalk.red(`Error: ${ZDR_EXPORT_DISABLED_MESSAGE}`));
+		process.exit(1);
+	}
+	if (parsed.export && parsed.noSession) {
+		console.error(chalk.red("Error: --export cannot be combined with --no-session"));
+		process.exit(1);
+	}
+	if (parsed.zdr && (parsed.session || parsed.fork || parsed.continue || parsed.resume)) {
+		console.error(chalk.red("Error: --zdr cannot resume, continue, or fork stored sessions"));
+		process.exit(1);
+	}
+}
+
 async function promptForMissingSessionCwd(
 	issue: SessionCwdIssue,
 	settingsManager: SettingsManager,
@@ -488,6 +516,8 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("parseArgs");
+	validatePrivacyFlags(parsed);
+	const privacy = privacyModeFromArgs(parsed);
 
 	if (parsed.version) {
 		console.log(VERSION);
@@ -548,6 +578,7 @@ export async function main(args: string[], options?: MainOptions) {
 		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
 		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
 		startupSettingsManager.getSessionDir();
+	pruneEmptySessionDirs(sessionDir ?? getSessionsDir());
 	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
@@ -575,7 +606,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const trustStore = new ProjectTrustStore(agentDir);
 	const sessionCwd = sessionManager.getCwd();
 	const autoTrustOnReloadCwd =
-		parsed.projectTrustOverride === undefined && !hasTrustRequiringProjectResources(sessionCwd)
+		parsed.projectTrustOverride === undefined && !hasTrustRequiringProjectResources(sessionCwd) && !privacy.clientZdr
 			? sessionCwd
 			: undefined;
 	const trustPromptMode: AppMode = parsed.help || parsed.listModels !== undefined ? "print" : appMode;
@@ -620,6 +651,7 @@ export async function main(args: string[], options?: MainOptions) {
 								trustOverride: parsed.projectTrustOverride,
 								defaultProjectTrust: startupSettingsManager.getDefaultProjectTrust(),
 								extensionsResult,
+								remember: !privacy.clientZdr,
 								projectTrustContext:
 									projectTrustContext ??
 									createProjectTrustContext({
@@ -685,8 +717,16 @@ export async function main(args: string[], options?: MainOptions) {
 		} else if (modelPatterns && modelPatterns.length > 0) {
 			scopedModels = await resolveModelScope(modelPatterns, modelRegistry, { provider: providerScope });
 		}
+		if (privacy.remoteZdr) {
+			scopedModels = scopedModels.filter((scoped) => modelRegistry.isZdrModel(scoped.model));
+		}
 		if (providerScope && !parsed.model && scopedModels.length === 0) {
-			diagnostics.push({ type: "error", message: `No available models found for provider "${providerScope}".` });
+			diagnostics.push({
+				type: "error",
+				message: privacy.remoteZdr
+					? `No ZDR-approved model is available for provider "${providerScope}".`
+					: `No available models found for provider "${providerScope}".`,
+			});
 		}
 		const {
 			options: sessionOptions,
@@ -701,6 +741,13 @@ export async function main(args: string[], options?: MainOptions) {
 			providerScope,
 		);
 		diagnostics.push(...sessionOptionDiagnostics);
+		if (privacy.remoteZdr && sessionOptions.model && !modelRegistry.isZdrModel(sessionOptions.model)) {
+			diagnostics.push({
+				type: "error",
+				message: ZDR_MODEL_REQUIRED_MESSAGE,
+			});
+			sessionOptions.model = undefined;
+		}
 
 		if (parsed.apiKey) {
 			if (!sessionOptions.model) {
@@ -725,6 +772,7 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
+			privacy,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
@@ -794,7 +842,9 @@ export async function main(args: string[], options?: MainOptions) {
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {
-		console.error(chalk.red(formatNoModelsAvailableMessage()));
+		console.error(
+			chalk.red(privacy.remoteZdr && modelFallbackMessage ? modelFallbackMessage : formatNoModelsAvailableMessage()),
+		);
 		process.exit(1);
 	}
 

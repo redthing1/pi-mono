@@ -9,6 +9,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
+import { DEFAULT_PRIVACY_MODE, type PrivacyMode } from "../privacy.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type {
@@ -267,6 +268,7 @@ export class ExtensionRunner {
 	private cwd: string;
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
+	private privacy: PrivacyMode;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private isIdleFn: () => boolean = () => true;
@@ -295,6 +297,7 @@ export class ExtensionRunner {
 		cwd: string,
 		sessionManager: SessionManager,
 		modelRegistry: ModelRegistry,
+		privacy: PrivacyMode = DEFAULT_PRIVACY_MODE,
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
@@ -302,6 +305,7 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		this.privacy = privacy;
 	}
 
 	bindCore(
@@ -653,6 +657,10 @@ export class ExtensionRunner {
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
+			},
+			get privacy() {
+				runner.assertActive();
+				return runner.privacy;
 			},
 			get signal() {
 				runner.assertActive();

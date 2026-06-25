@@ -49,6 +49,7 @@ import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
+import type { PrivacyMode } from "../privacy.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -316,6 +317,8 @@ export interface ExtensionContext {
 	isIdle(): boolean;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
+	/** Current privacy mode. */
+	privacy: PrivacyMode;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
 	/** Abort the current agent operation */
@@ -1361,6 +1364,8 @@ export interface ProviderConfig {
 	apiKey?: string;
 	/** API type. Required at provider or model level when defining models. */
 	api?: Api;
+	/** Whether this provider is explicitly approved for zero-data-retention use. */
+	zdr?: boolean;
 	/** Optional streamSimple handler for custom APIs. */
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	/** Custom headers to include in requests. */
@@ -1394,6 +1399,8 @@ export interface ProviderModelConfig {
 	api?: Api;
 	/** API endpoint URL override for this model. */
 	baseUrl?: string;
+	/** Whether this model is explicitly approved for zero-data-retention use. */
+	zdr?: boolean;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */

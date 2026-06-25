@@ -81,6 +81,12 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage, SkillInvocation } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import {
+	DEFAULT_PRIVACY_MODE,
+	type PrivacyMode,
+	ZDR_EXPORT_DISABLED_MESSAGE,
+	ZDR_MODEL_REQUIRED_MESSAGE,
+} from "./privacy.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -187,6 +193,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Privacy controls for local session persistence and remote provider eligibility. */
+	privacy?: PrivacyMode;
 }
 
 export interface ExtensionBindings {
@@ -312,6 +320,7 @@ export class AgentSession {
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
+	private _privacy: PrivacyMode;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
@@ -349,6 +358,10 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._privacy = config.privacy ?? DEFAULT_PRIVACY_MODE;
+		if (this._privacy.clientZdr && this.sessionManager.isPersisted()) {
+			throw new Error("client ZDR requires an in-memory session manager");
+		}
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -869,6 +882,11 @@ export class AgentSession {
 	/** Current session display name, if set */
 	get sessionName(): string | undefined {
 		return this.sessionManager.getSessionName();
+	}
+
+	/** Current privacy mode. */
+	get privacy(): PrivacyMode {
+		return this._privacy;
 	}
 
 	/** Scoped models for cycling (from --models flag) */
@@ -1521,6 +1539,11 @@ export class AgentSession {
 		});
 	}
 
+	private _assertModelAllowedByPrivacy(model: Model<any>): void {
+		if (!this._privacy.remoteZdr || this._modelRegistry.isZdrModel(model)) return;
+		throw new Error(ZDR_MODEL_REQUIRED_MESSAGE);
+	}
+
 	/**
 	 * Set model directly.
 	 * Validates that auth is configured, saves to session and settings.
@@ -1530,6 +1553,7 @@ export class AgentSession {
 		if (!this._isModelInsideProviderScope(model)) {
 			throw new Error(`Model ${model.provider}/${model.id} is outside provider scope "${this._providerScope}"`);
 		}
+		this._assertModelAllowedByPrivacy(model);
 		if (!this._modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -1560,8 +1584,10 @@ export class AgentSession {
 	}
 
 	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const scopedModels = this._filterScopedModelsForProviderScope(this._scopedModels).filter((scoped) =>
-			this._modelRegistry.hasConfiguredAuth(scoped.model),
+		const scopedModels = this._filterScopedModelsForProviderScope(this._scopedModels).filter(
+			(scoped) =>
+				this._modelRegistry.hasConfiguredAuth(scoped.model) &&
+				(!this._privacy.remoteZdr || this._modelRegistry.isZdrModel(scoped.model)),
 		);
 		if (scopedModels.length <= 1) return undefined;
 
@@ -1591,8 +1617,10 @@ export class AgentSession {
 	}
 
 	private async _cycleAvailableModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const availableModels = (await this._modelRegistry.getAvailable()).filter((model) =>
-			this._isModelInsideProviderScope(model),
+		const availableModels = (await this._modelRegistry.getAvailable()).filter(
+			(model) =>
+				this._isModelInsideProviderScope(model) &&
+				(!this._privacy.remoteZdr || this._modelRegistry.isZdrModel(model)),
 		);
 		if (availableModels.length <= 1) return undefined;
 
@@ -2521,6 +2549,7 @@ export class AgentSession {
 			this._cwd,
 			this.sessionManager,
 			this._modelRegistry,
+			this._privacy,
 		);
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
@@ -3123,6 +3152,9 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string): Promise<string> {
+		if (this._privacy.clientZdr) {
+			throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
+		}
 		const configuredThemeName = this.settingsManager.getTheme();
 		const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
 
@@ -3147,6 +3179,9 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
+		if (this._privacy.clientZdr) {
+			throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
+		}
 		const filePath = resolvePath(
 			outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`,
 			process.cwd(),
