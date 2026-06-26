@@ -1,4 +1,4 @@
-import { getModel, type Usage } from "@earendil-works/pi-ai";
+import { getModel, type Usage } from "@earendil-works/pi-ai/compat";
 import { Container } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test, vi } from "vitest";
@@ -45,6 +45,7 @@ function createHarness(options: { compactExploration?: boolean } = {}) {
 
 	return Object.assign(Object.create(InteractiveMode.prototype), {
 		runtimeHost: { session },
+		loadedResourcesContainer: new Container(),
 		chatContainer: new Container(),
 		pendingTools: new Map(),
 		lastExplorationGroup: undefined,

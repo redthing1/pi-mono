@@ -29,6 +29,7 @@ pi install ./relative/path/to/package
 pi remove git:github.com/user/repo
 pi list                     # show installed packages from settings
 pi update                   # update packages, reconcile pinned git refs, then report fork self-update policy
+pi update --all             # update packages, reconcile pinned git refs, then report fork self-update policy
 pi update --extensions      # update packages and reconcile pinned git refs only
 pi update --self            # show fork self-update policy
 pi update --self --force    # show fork self-update policy
@@ -73,7 +74,7 @@ ssh://git@github.com/user/repo@v1
 - HTTPS and SSH URLs are both supported.
 - SSH URLs use your configured SSH keys automatically (respects `~/.ssh/config`).
 - For non-interactive runs (for example CI), you can set `GIT_TERMINAL_PROMPT=0` to disable credential prompts and set `GIT_SSH_COMMAND` (for example `ssh -o BatchMode=yes -o ConnectTimeout=5`) to fail fast.
-- Refs are pinned tags or commits. `pi update` and `pi update --extensions` do not move them to newer refs, but they do reconcile an existing clone to the configured ref.
+- Refs are pinned tags or commits. `pi update --extensions` and `pi update --all` do not move them to newer refs, but they do reconcile an existing clone to the configured ref.
 - Use `pi install git:host/user/repo@new-ref` to update settings and move an existing package to a new pinned ref.
 - Cloned to `~/.pi/agent/git/<host>/<path>` (global) or `.pi/git/<host>/<path>` (project).
 - Runs `bun install --omit=dev --omit=peer --ignore-scripts` after clone or pull if `package.json` exists. If `bun.lock` is present, `--frozen-lockfile` is also used.

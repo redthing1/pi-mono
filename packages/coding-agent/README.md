@@ -7,11 +7,6 @@
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
   <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
 </p>
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
@@ -119,7 +114,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - xAI
 - OpenRouter
 - Vercel AI Gateway
-- ZAI
+- ZAI Coding Plan (Global)
 - ZAI Coding Plan (China)
 - OpenCode Zen
 - OpenCode Go
@@ -185,7 +180,8 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
-| `/export [file]` | Export session to HTML file |
+| `/export [file]` | Export session to HTML or JSONL file |
+| `/import <file>` | Import and resume a session from a JSONL file |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
@@ -412,6 +408,7 @@ pi remove git:github.com/user/repo
 pi uninstall git:github.com/user/repo   # alias for remove
 pi list
 pi update                               # update packages, then report fork self-update policy
+pi update --all                         # update packages, then report fork self-update policy
 pi update --extensions                  # update packages only
 pi update --self                        # show fork self-update policy
 pi update --self --force                # show fork self-update policy
@@ -419,7 +416,7 @@ pi update git:github.com/user/repo      # update one package
 pi config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Git packages install to `~/.pi/agent/git/`; use `-l` for project-local installs under `.pi/git/`. If a git package has a `package.json`, pi installs runtime dependencies with `bun install --omit=dev --omit=peer --ignore-scripts`, using `--frozen-lockfile` when `bun.lock` is present.
+Git packages install to `~/.pi/agent/git/`; use `-l` for project-local installs under `.pi/git/`. Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update --extensions` and `pi update --all`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. If a git package has a `package.json`, pi installs runtime dependencies with `bun install --omit=dev --omit=peer --ignore-scripts`, using `--frozen-lockfile` when `bun.lock` is present.
 Registry package installs are disabled in this fork. Existing npm package entries can be removed from settings, but new package installs should use reviewed git or local paths.
 
 Create a package by adding a `pi` key to `package.json`:
@@ -512,6 +509,7 @@ pi install <source> [-l]     # Install package, -l for project-local
 pi remove <source> [-l]      # Remove package
 pi uninstall <source> [-l]   # Alias for remove
 pi update [source|self|pi]   # Update packages; self-update reports fork policy
+pi update --all              # Update packages; self-update reports fork policy
 pi update --extensions       # Update packages only
 pi update --self             # Show fork self-update policy
 pi update --self --force     # Show fork self-update policy
@@ -666,8 +664,6 @@ pi --thinking high "Solve this complex problem"
 
 See [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines and [docs/development.md](docs/development.md) for setup, forking, and debugging.
 
----
-
 ## License
 
 MIT
@@ -677,3 +673,9 @@ MIT
 - [@earendil-works/pi-ai](https://www.npmjs.com/package/@earendil-works/pi-ai): Core LLM toolkit
 - [@earendil-works/pi-agent-core](https://www.npmjs.com/package/@earendil-works/pi-agent-core): Agent framework
 - [@earendil-works/pi-tui](https://www.npmjs.com/package/@earendil-works/pi-tui): Terminal UI components
+
+<p align="center">
+  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
+  <br /><br />
+  <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
+</p>
