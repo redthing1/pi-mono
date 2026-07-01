@@ -13,7 +13,7 @@
 	"scripts": {
 		"clean": "bun run --workspaces --if-present clean",
 		"build": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && bun run build && cd ../orchestrator && bun run build",
-		"build:pi": "cd packages/tui && bun run build && cd ../ai && bun run build:local && cd ../agent && bun run build && cd ../coding-agent && bun run build",
+		"build:pi": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../coding-agent && bun run build",
 		"check": "biome check --write --error-on-warnings . && bun run check:pinned-deps && bun run check:ts-imports && tsgo --noEmit && bun run check:browser-smoke",
 		"check:browser-smoke": "bun scripts/check-browser-smoke.mjs",
 		"check:pinned-deps": "bun scripts/check-pinned-deps.mjs",
