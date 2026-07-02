@@ -397,7 +397,22 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 
 			stream.push({ type: "start", partial: output });
-			await processStream(response, output, stream, model, options);
+			try {
+				await processStream(response, output, stream, model, options);
+			} catch (error) {
+				if (!options?.signal?.aborted && error instanceof CodexStreamDisconnectError) {
+					appendAssistantMessageDiagnostic(
+						output,
+						createAssistantMessageDiagnostic("provider_transport_failure", error.originalError, {
+							configuredTransport: "sse",
+							eventsEmitted: true,
+							phase: "after_message_stream_start",
+							requestBytes: new TextEncoder().encode(bodyJson).byteLength,
+						}),
+					);
+				}
+				throw error;
+			}
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -559,11 +574,18 @@ async function processStream(
 	model: Model<"openai-codex-responses">,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	try {
+		await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream, model, {
+			serviceTier: options?.serviceTier,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		});
+	} catch (error) {
+		if (isMissingTerminalResponseEvent(error)) {
+			throw new CodexStreamDisconnectError(error);
+		}
+		throw error;
+	}
 }
 
 class CodexApiError extends Error {
@@ -590,8 +612,22 @@ class CodexProtocolError extends Error {
 	}
 }
 
+class CodexStreamDisconnectError extends Error {
+	readonly originalError: unknown;
+
+	constructor(originalError: unknown) {
+		super(`stream disconnected before completion: ${formatThrownValue(originalError)}`);
+		this.name = "CodexStreamDisconnectError";
+		this.originalError = originalError;
+	}
+}
+
 function isCodexNonTransportError(error: unknown): boolean {
 	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+}
+
+function isMissingTerminalResponseEvent(error: unknown): boolean {
+	return error instanceof Error && error.message === "OpenAI Responses stream ended before a terminal response event";
 }
 
 function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
@@ -669,7 +705,16 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
-			const { done, value } = await reader.read();
+			let readResult: ReadableStreamReadResult<Uint8Array>;
+			try {
+				readResult = await reader.read();
+			} catch (error) {
+				if (signal?.aborted) {
+					throw new Error("Request was aborted");
+				}
+				throw new CodexStreamDisconnectError(error);
+			}
+			const { done, value } = readResult;
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}

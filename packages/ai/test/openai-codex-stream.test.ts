@@ -486,6 +486,74 @@ describe("openai-codex streaming", () => {
 		expect(cancelled).toBe(true);
 	});
 
+	it("normalizes SSE body read failures after response headers arrive", async () => {
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const socketError =
+			"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					encoder.encode(
+						`${[
+							`data: ${JSON.stringify({
+								type: "response.output_item.added",
+								item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+							})}`,
+							`data: ${JSON.stringify({ type: "response.content_part.added", part: { type: "output_text", text: "" } })}`,
+							`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial" })}`,
+						].join("\n\n")}\n\n`,
+					),
+				);
+				queueMicrotask(() => {
+					controller.error(new Error(socketError));
+				});
+			},
+		});
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const result = await streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			sessionId: "sse-body-close",
+			transport: "sse",
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe(`stream disconnected before completion: ${socketError}`);
+		expect(result.diagnostics).toEqual([
+			expect.objectContaining({
+				type: "provider_transport_failure",
+				error: expect.objectContaining({ message: socketError }),
+				details: expect.objectContaining({
+					configuredTransport: "sse",
+					eventsEmitted: true,
+					phase: "after_message_stream_start",
+				}),
+			}),
+		]);
+	});
+
 	it("sets session-id/x-client-request-id headers and prompt_cache_key when sessionId is provided", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;

@@ -2628,6 +2628,32 @@ export class AgentSession {
 		return isRetryableAssistantError(message);
 	}
 
+	private _removeRetryMessageFromActivePath(message: AssistantMessage): void {
+		const messages = this.agent.state.messages;
+		const lastMessage = messages[messages.length - 1];
+		if (lastMessage === message) {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
+
+		// Keep failed attempts in append-only history, but retry from their parent.
+		let failedEntryParentId: string | null | undefined;
+		const branch = this.sessionManager.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry.type !== "message") continue;
+			if (entry.message !== message) continue;
+			failedEntryParentId = entry.parentId;
+			break;
+		}
+		if (failedEntryParentId === undefined) return;
+
+		if (failedEntryParentId === null) {
+			this.sessionManager.resetLeaf();
+		} else {
+			this.sessionManager.branch(failedEntryParentId);
+		}
+	}
+
 	/**
 	 * Prepare a retryable error for continuation with exponential backoff.
 	 * @returns true if the caller should continue the agent, false otherwise
@@ -2656,12 +2682,6 @@ export class AgentSession {
 			errorMessage: message.errorMessage || "Unknown error",
 		});
 
-		// Remove error message from agent state (keep in session for history)
-		const messages = this.agent.state.messages;
-		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-			this.agent.state.messages = messages.slice(0, -1);
-		}
-
 		// Wait with exponential backoff (abortable)
 		this._retryAbortController = new AbortController();
 		try {
@@ -2681,6 +2701,7 @@ export class AgentSession {
 			this._retryAbortController = undefined;
 		}
 
+		this._removeRetryMessageFromActivePath(message);
 		return true;
 	}
 

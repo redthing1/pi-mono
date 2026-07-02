@@ -48,11 +48,16 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"connection.?error",
 	"connection.?refused",
 	"connection.?lost",
+	"connection.?reset.?by.?peer",
+	"ConnectionClosed",
+	"ECONNRESET",
+	"UND_ERR_SOCKET",
 	"other side closed",
 	"fetch failed",
 	"upstream.?connect",
 	"reset before headers",
 	"socket hang up",
+	"socket.?connection.?was.?closed.?unexpectedly",
 	"timed? out",
 	"timeout",
 	"terminated",
@@ -64,6 +69,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Premature stream endings from SDKs and transports. Anthropic can throw
 	// "stream ended without ..." and "Anthropic stream ended before message_stop"
 	// (#4433); Bedrock/Smithy can throw an HTTP/2 no-response error (#3594).
+	"stream.?disconnected",
+	"stream.*closed.*before",
+	"stream.*ended.*before",
 	"ended without",
 	"stream ended before message_stop",
 	"http2 request did not get a response",

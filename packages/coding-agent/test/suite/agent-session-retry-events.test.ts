@@ -1,8 +1,12 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
+
+const bunSocketCloseMessage =
+	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 
 function normalizeEventOrder(events: Harness["events"]): string[] {
 	const normalized: string[] = [];
@@ -50,6 +54,60 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.session.isRetrying).toBe(false);
+
+		const sessionMessages = harness.sessionManager.buildSessionContext().messages;
+		expect(
+			sessionMessages.filter((message) => message.role === "assistant" && message.stopReason === "error"),
+		).toEqual([]);
+	});
+
+	it("retries after a Bun socket close error and succeeds", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: bunSocketCloseMessage }),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.eventsOfType("auto_retry_start").map((event) => event.errorMessage)).toEqual([
+			bunSocketCloseMessage,
+		]);
+		expect(harness.sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+	});
+
+	it("removes retry failures from the active branch when extension metadata follows the failure", async () => {
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_end", async (event) => {
+						const lastMessage = event.messages[event.messages.length - 1];
+						if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
+							pi.appendEntry("retry.audit", { errorMessage: lastMessage.errorMessage });
+						}
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: bunSocketCloseMessage }),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "custom")).toBe(true);
+		expect(harness.sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
 	});
 
 	it("retries multiple transient failures and succeeds on the final attempt", async () => {
@@ -94,6 +152,14 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, true, false]);
 		expect(harness.faux.state.callCount).toBe(3);
 		expect(harness.session.isRetrying).toBe(false);
+
+		const sessionAssistantErrors = harness.sessionManager
+			.buildSessionContext()
+			.messages.filter(
+				(message): message is AssistantMessage => message.role === "assistant" && message.stopReason === "error",
+			);
+		expect(sessionAssistantErrors).toHaveLength(1);
+		expect(sessionAssistantErrors[0]?.errorMessage).toBe("overloaded_error");
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {
@@ -165,6 +231,11 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.session.isRetrying).toBe(false);
 		expect(harness.eventsOfType("auto_retry_end").map((event) => event.finalError)).toContain("Retry cancelled");
 		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("assistant");
+		expect(harness.sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
 	});
 
 	it("waits for the full loop when retry recovery produces tool calls", async () => {
