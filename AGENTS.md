@@ -69,7 +69,7 @@ If rebase conflicts occur:
 
 ## Issues and PRs
 
-See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
+See `CONTRIBUTING.md` for the contributor quality bar.
 
 When reviewing PRs:
 
@@ -145,13 +145,13 @@ Attribution:
    bun run release:patch    # fixes + additions
    bun run release:minor    # breaking changes
    ```
-   Review any lockfile diffs the release creates before push.
+   Review any lockfile diffs and both release commits before pushing or publishing.
 
-   The release script bumps all package versions, updates changelogs, regenerates release artifacts, runs `bun run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
+   The release script bumps all package versions, updates changelogs, regenerates release artifacts, runs `bun run check` and `./test.sh`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, and commits `Add [Unreleased] section for next cycle`. It does not push or publish.
 
-4. **CI publishes npm packages**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required.
+4. **Review and publish explicitly**: verify the release commits and tag, then run `bun run publish:dry`. Registry publishing is a separate, manual action via `bun run publish` and may require npm authentication. Do not publish unless the user explicitly requests it.
 
-5. **If CI publish fails**: inspect the failed `publish-npm` job. The publish helper is idempotent and skips package versions already present on npm, so rerun the tag workflow after fixing CI or transient npm issues. Do not rerun `bun run release:patch` or `bun run release:minor` for the same version.
+5. **Push explicitly**: after review and any requested publishing, push `main` and `vX.Y.Z` explicitly. Do not rerun the release script for the same version.
 
 ## User Override
 

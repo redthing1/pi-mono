@@ -255,16 +255,28 @@ export function parseModelPattern(
  * The algorithm tries to match the full pattern first, then progressively
  * strips colon-suffixes to find a match.
  */
-export async function resolveModelScope(
+export interface ModelScopeDiagnostic {
+	type: "warning";
+	message: string;
+	pattern: string;
+}
+
+export interface ResolveModelScopeResult {
+	scopedModels: ScopedModel[];
+	diagnostics: ModelScopeDiagnostic[];
+}
+
+export async function resolveModelScopeWithDiagnostics(
 	patterns: string[],
 	modelRegistry: ModelRegistry,
 	options?: { provider?: string },
-): Promise<ScopedModel[]> {
+): Promise<ResolveModelScopeResult> {
 	const availableModels = await modelRegistry.getAvailable();
 	const candidateModels = options?.provider
 		? availableModels.filter((model) => model.provider === options.provider)
 		: availableModels;
 	const scopedModels: ScopedModel[] = [];
+	const diagnostics: ModelScopeDiagnostic[] = [];
 
 	for (const pattern of patterns) {
 		// Check if pattern contains glob characters
@@ -290,7 +302,7 @@ export async function resolveModelScope(
 			});
 
 			if (matchingModels.length === 0) {
-				console.warn(chalk.yellow(`Warning: No models match pattern "${pattern}"`));
+				diagnostics.push({ type: "warning", message: `No models match pattern "${pattern}"`, pattern });
 				continue;
 			}
 
@@ -305,11 +317,11 @@ export async function resolveModelScope(
 		const { model, thinkingLevel, warning } = parseModelPattern(pattern, candidateModels);
 
 		if (warning) {
-			console.warn(chalk.yellow(`Warning: ${warning}`));
+			diagnostics.push({ type: "warning", message: warning, pattern });
 		}
 
 		if (!model) {
-			console.warn(chalk.yellow(`Warning: No models match pattern "${pattern}"`));
+			diagnostics.push({ type: "warning", message: `No models match pattern "${pattern}"`, pattern });
 			continue;
 		}
 
@@ -319,6 +331,18 @@ export async function resolveModelScope(
 		}
 	}
 
+	return { scopedModels, diagnostics };
+}
+
+export async function resolveModelScope(
+	patterns: string[],
+	modelRegistry: ModelRegistry,
+	options?: { provider?: string },
+): Promise<ScopedModel[]> {
+	const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(patterns, modelRegistry, options);
+	for (const diagnostic of diagnostics) {
+		console.warn(chalk.yellow(`Warning: ${diagnostic.message}`));
+	}
 	return scopedModels;
 }
 
@@ -621,10 +645,10 @@ export async function findInitialModel(options: {
 		};
 	}
 
-	// 3. Try saved default from settings
+	// 3. Try saved default from settings if auth is configured.
 	if (defaultProvider && defaultModelId && (!providerScope || defaultProvider === providerScope)) {
 		const found = modelRegistry.find(defaultProvider, defaultModelId);
-		if (found) {
+		if (found && modelRegistry.hasConfiguredAuth(found)) {
 			model = found;
 			if (defaultThinkingLevel) {
 				thinkingLevel = defaultThinkingLevel;

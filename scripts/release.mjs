@@ -11,11 +11,11 @@
  * 2. Bump version via bun run version:xxx or set an explicit version
  * 3. Update CHANGELOG.md files: [Unreleased] -> [version] - date
  * 4. Regenerate release artifacts
- * 5. Run checks
+ * 5. Run checks and tests
  * 6. Commit and tag the release
  * 7. Add new [Unreleased] section to changelogs
  * 8. Commit next-cycle changelog updates
- * 9. Push main and the tag to trigger CI publishing
+ * 9. Stop for explicit review, publishing, and push
  */
 
 import { execSync } from "child_process";
@@ -170,9 +170,13 @@ run("bun --cwd packages/ai run generate-models");
 run("bun --cwd packages/ai run generate-image-models");
 console.log();
 
-// 5. Run checks
+// 5. Run checks and tests
 console.log("Running checks...");
 run("bun run check");
+console.log();
+
+console.log("Running tests...");
+run("./test.sh");
 console.log();
 
 // 6. Commit and tag
@@ -193,10 +197,9 @@ stageChangedFiles();
 run(`git commit -m "Add [Unreleased] section for next cycle"`);
 console.log();
 
-// 9. Push
-console.log("Pushing to remote...");
-run("git push origin main");
-run(`git push origin v${version}`);
-console.log();
-
-console.log(`=== Prepared release v${version}; CI publishing starts after the tag push ===`);
+console.log(`=== Prepared release v${version}; review before publishing or pushing ===`);
+console.log("Manual next steps:");
+console.log("  bun run publish:dry");
+console.log("  bun run publish       # only when explicitly approved");
+console.log("  git push origin main");
+console.log(`  git push origin v${version}`);

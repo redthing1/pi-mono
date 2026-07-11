@@ -18,21 +18,6 @@ Using AI to write code is fine. Submitting AI-generated slop without understandi
 
 If you use an agent, run it from the `pi` root directory so it picks up `AGENTS.md` automatically. Your agent must follow the rules and guidelines in that file.
 
-## Contribution Gate
-
-All issues and PRs from new contributors are auto-closed by default.
-
-Issues submitted Friday through Sunday are not guaranteed to be reviewed.  If something is urgent, ask on Discord: https://discord.com/invite/3cU7Bz4UPx
-
-Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar below will not be reopened or receive a reply.
-
-Approval happens through maintainer replies on issues:
-
-- `lgtmi`: your future issues will not be auto-closed
-- `lgtm`: your future issues and PRs will not be auto-closed
-
-`lgtmi` does not grant rights to submit PRs. Only `lgtm` grants rights to submit PRs.
-
 ## Quality Bar For Issues
 
 If you open an issue, you must use one of the two GitHub issue templates.
@@ -45,7 +30,7 @@ If you open an issue, keep it short, concrete, and worth reading.
 - Explain why it matters.
 - If you want to implement the change yourself, say so.
 
-If the issue is real and written well, a maintainer may reopen it, reply `lgtmi`, or reply `lgtm`.
+Issues that meet this bar are more likely to receive timely review.
 
 ## Blocking
 
@@ -55,12 +40,10 @@ If you send a large volume of issues through automation, your GitHub account wil
 
 ## Before Submitting a PR
 
-Do not open a PR unless you have already been approved with `lgtm`.
-
 Before submitting a PR:
 
 ```bash
-npm run check
+bun run check
 ./test.sh
 ```
 
@@ -75,10 +58,6 @@ If you are adding a new provider to `packages/ai`, see `AGENTS.md` for required 
 Ask on [Discord](https://discord.com/invite/nKXTsAcmbT).
 
 ## FAQ
-
-### Why are new issues and PRs auto-closed?
-
-pi receives more issues than the maintainers can responsibly review in real time. Many reports do not meet the quality bar in this guide or do not follow CONTRIBUTING.md. Some are slung at the repository mindlessly via an agent instead of being reviewed and shaped by the person submitting them. Auto-closing creates a buffer so maintainers can review the tracker on their own schedule and reopen the issues that meet the quality bar.
 
 ### Why are weekend issues lower priority?
 

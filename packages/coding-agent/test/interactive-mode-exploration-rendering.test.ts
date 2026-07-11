@@ -1,8 +1,8 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { getModel, type Usage } from "@earendil-works/pi-ai/compat";
 import { Container } from "@earendil-works/pi-tui";
 import stripAnsi from "strip-ansi";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import type { SessionContext } from "../src/core/session-manager.ts";
 import type { ExplorationGroupComponent } from "../src/modes/interactive/components/exploration-group.ts";
 import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -32,6 +32,7 @@ function createHarness(options: { compactExploration?: boolean } = {}) {
 		getShowImages: () => true,
 		getImageWidthCells: () => 60,
 		getCompactExploration: () => options.compactExploration ?? true,
+		getShowCacheMissNotices: () => false,
 	};
 	const sessionManager = {
 		getCwd: () => process.cwd(),
@@ -73,7 +74,7 @@ type TestPendingToolView = {
 };
 
 const privateMethods = InteractiveMode.prototype as unknown as {
-	renderSessionContext(this: Harness, sessionContext: SessionContext): void;
+	renderSessionItems(this: Harness, items: AgentMessage[]): void;
 	setToolsExpanded(this: Harness, expanded: boolean): void;
 	createToolExecutionComponent(
 		this: Harness,
@@ -96,31 +97,27 @@ describe("InteractiveMode exploration rendering", () => {
 	test("replays read tool calls as compact exploration groups and expands to detailed output", () => {
 		if (!model) throw new Error("Expected test model to exist");
 		const harness = createHarness();
-		const sessionContext: SessionContext = {
-			thinkingLevel: "off",
-			model: { provider: model.provider, modelId: model.id },
-			messages: [
-				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "tool-read-1", name: "read", arguments: { path: "src/read.ts" } }],
-					api: model.api,
-					provider: model.provider,
-					model: model.id,
-					usage: createUsage(),
-					stopReason: "toolUse",
-					timestamp: 1,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "tool-read-1",
-					toolName: "read",
-					content: [{ type: "text", text: "line one\nline two" }],
-					isError: false,
-					timestamp: 2,
-				},
-			],
-		};
-		privateMethods.renderSessionContext.call(harness, sessionContext);
+		const messages: AgentMessage[] = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tool-read-1", name: "read", arguments: { path: "src/read.ts" } }],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: createUsage(),
+				stopReason: "toolUse",
+				timestamp: 1,
+			},
+			{
+				role: "toolResult",
+				toolCallId: "tool-read-1",
+				toolName: "read",
+				content: [{ type: "text", text: "line one\nline two" }],
+				isError: false,
+				timestamp: 2,
+			},
+		];
+		privateMethods.renderSessionItems.call(harness, messages);
 
 		const collapsed = renderChat(harness.chatContainer);
 		expect(collapsed).toContain("Explored");
@@ -140,31 +137,27 @@ describe("InteractiveMode exploration rendering", () => {
 	test("replays detailed tool output when compact exploration is disabled", () => {
 		if (!model) throw new Error("Expected test model to exist");
 		const harness = createHarness({ compactExploration: false });
-		const sessionContext: SessionContext = {
-			thinkingLevel: "off",
-			model: { provider: model.provider, modelId: model.id },
-			messages: [
-				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "tool-read-2", name: "read", arguments: { path: "src/read.ts" } }],
-					api: model.api,
-					provider: model.provider,
-					model: model.id,
-					usage: createUsage(),
-					stopReason: "toolUse",
-					timestamp: 1,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "tool-read-2",
-					toolName: "read",
-					content: [{ type: "text", text: "line one\nline two" }],
-					isError: false,
-					timestamp: 2,
-				},
-			],
-		};
-		privateMethods.renderSessionContext.call(harness, sessionContext);
+		const messages: AgentMessage[] = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tool-read-2", name: "read", arguments: { path: "src/read.ts" } }],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: createUsage(),
+				stopReason: "toolUse",
+				timestamp: 1,
+			},
+			{
+				role: "toolResult",
+				toolCallId: "tool-read-2",
+				toolName: "read",
+				content: [{ type: "text", text: "line one\nline two" }],
+				isError: false,
+				timestamp: 2,
+			},
+		];
+		privateMethods.renderSessionItems.call(harness, messages);
 		privateMethods.setToolsExpanded.call(harness, true);
 
 		const rendered = renderChat(harness.chatContainer);

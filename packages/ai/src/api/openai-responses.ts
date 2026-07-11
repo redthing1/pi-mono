@@ -15,6 +15,8 @@ import type {
 	StreamOptions,
 	Usage,
 } from "../types.ts";
+import { splitDeferredTools } from "../utils/deferred-tools.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -24,6 +26,8 @@ import { convertResponsesMessages, convertResponsesTools, processResponsesStream
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+// OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
+const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
@@ -59,6 +63,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
+		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 	};
 }
 
@@ -70,24 +75,12 @@ function getPromptCacheRetention(
 }
 
 function formatOpenAIResponsesError(error: unknown): string {
-	if (error instanceof Error) {
-		const status = (error as Error & { status?: unknown }).status;
-		const statusCode = typeof status === "number" ? status : undefined;
-		if (statusCode !== undefined) {
-			return `OpenAI API error (${statusCode}): ${error.message}`;
-		}
-		return error.message;
-	}
-	try {
-		return JSON.stringify(error);
-	} catch {
-		return String(error);
-	}
+	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
 }
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 }
@@ -229,10 +222,13 @@ function createClient(
 }
 
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
-	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
+	const compat = getCompat(model);
+	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
+	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+		deferredTools: toolPlacement.deferred,
+	});
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	const compat = getCompat(model);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
@@ -243,7 +239,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	};
 
 	if (options?.maxTokens) {
-		params.max_output_tokens = options?.maxTokens;
+		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
 
 	if (options?.temperature !== undefined) {
@@ -254,8 +250,8 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+	if (toolPlacement.immediate.length > 0) {
+		params.tools = convertResponsesTools(toolPlacement.immediate);
 	}
 
 	if (model.reasoning) {

@@ -32,6 +32,7 @@ import { execCommand } from "../exec.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type {
+	EntryRenderer,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
@@ -273,6 +274,12 @@ function createExtensionAPI(
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
 
+		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
+			runtime.assertActive();
+			extension.entryRenderers ??= new Map();
+			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+		},
+
 		// Flag access - checks extension registered it, reads from runtime
 		getFlag(name: string): boolean | string | undefined {
 			runtime.assertActive();
@@ -419,6 +426,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
+		entryRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
@@ -615,7 +623,9 @@ function discoverExtensionsInDir(dir: string): string[] {
 	const discovered: string[] = [];
 
 	try {
-		const entries = fs.readdirSync(dir, { withFileTypes: true });
+		const entries = fs
+			.readdirSync(dir, { withFileTypes: true })
+			.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
 		for (const entry of entries) {
 			const entryPath = path.join(dir, entry.name);
