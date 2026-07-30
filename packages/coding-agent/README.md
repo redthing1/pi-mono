@@ -60,7 +60,13 @@ I regularly publish my own `pi-mono` work sessions here:
 
 ## Quick Start
 
-This fork has no remote installer or self-update path. Run pi only from a reviewed, already-provisioned local checkout or release artifact; pi never fetches or installs package code.
+This fork has no runtime installer or self-update path. From a reviewed source checkout, install the local CLI with:
+
+```bash
+bun run install:local-pi
+```
+
+This explicitly hydrates the exact committed `bun.lock`, builds the workspace, and globally links the local CLI. Pi itself never fetches or installs package code at runtime.
 
 Authenticate with an API key:
 

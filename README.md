@@ -49,10 +49,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ## Development
 
 ```bash
-# Dependencies must already be provisioned from reviewed local artifacts.
-BUN_AUTO_INSTALL=0 bun --no-install run check  # Lint, format, and type check
-./test.sh                                      # Run tests (skips LLM-dependent tests without API keys)
-./pi-test.sh                                   # Run pi from sources (can be run from any directory)
+bun install --frozen-lockfile  # Hydrate the exact committed dependency graph
+bun run install:local-pi       # Build and globally link Pi from this checkout
+bun run build                  # Build all packages
+bun run check                  # Lint, format, and type check
+./test.sh                      # Run tests (skips LLM-dependent tests without API keys)
+./pi-test.sh                   # Run pi from sources (can be run from any directory)
 ```
 
 > **Note:** `bun run check` requires `bun run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
@@ -64,7 +66,8 @@ We treat dependency changes as reviewed code changes.
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
 - `bun.lock` is the dependency ground truth and must be updated intentionally.
 - `bun run check` verifies pinned direct deps and native TypeScript import compatibility.
-- Pi has no runtime installer: use only an already-provisioned, reviewed local checkout or release artifact.
+- `bun run install:local-pi` explicitly hydrates the exact committed lockfile, builds the workspace, and globally links this checkout. The global Pi package is a local `link:` source.
+- Pi has no runtime installer that retrieves code. Runtime package sources and updates remain local-only.
 - Registry, Git, and URL Pi package sources and automatic self-update are disabled in this fork.
 - Pi packages must be already-present local paths with their runtime code bundled or vendored.
 - Review upstream dependency and installer changes before adopting them.

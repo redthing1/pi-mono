@@ -50,7 +50,13 @@ Important risks include:
 
 ## Source Checkout Installation
 
-This fork intentionally provides no installer that retrieves code or dependencies. Use a reviewed, already-provisioned local source checkout or release artifact. Pi's own runtime must never fetch, clone, hydrate, or install dependencies.
+The preferred trusted install path is a reviewed source checkout:
+
+```bash
+bun run install:local-pi
+```
+
+The script performs an explicit `bun install --frozen-lockfile`, builds the Pi workspaces, registers the local coding-agent package with `bun link`, and installs the global `pi` binary as `@redthing1/pi-coding-agent` from that local link. The frozen install hydrates only the exact dependency graph committed in `bun.lock`; it is developer setup, not a Pi runtime update path. Pi's own runtime must never fetch, clone, hydrate, or install dependencies.
 
 ## Package And Extension Principles
 

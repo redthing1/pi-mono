@@ -4,7 +4,13 @@ This page gets you from install to a useful first pi session.
 
 ## Install From Source
 
-This fork has no remote installer or self-update path. Run pi only from a reviewed, already-provisioned local checkout or release artifact; pi never fetches or installs package code.
+This fork has no runtime installer or self-update path. From a reviewed source checkout:
+
+```bash
+bun run install:local-pi
+```
+
+This explicitly hydrates the exact committed `bun.lock`, builds the workspace, and globally links the local CLI. Pi itself never fetches or installs package code at runtime.
 
 ### Uninstall
 

@@ -4,7 +4,7 @@ Pi is a minimal terminal coding harness. It is designed to stay small at the cor
 
 ## Quick start
 
-This fork has no remote installer or self-update path. Run pi only from a reviewed, already-provisioned local checkout or release artifact; pi never fetches or installs package code.
+This fork has no runtime installer or self-update path. From a reviewed source checkout, run `bun run install:local-pi` to hydrate the exact committed `bun.lock`, build, and globally link the local CLI. Pi itself never fetches or installs package code at runtime.
 
 To uninstall pi itself:
 
