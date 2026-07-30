@@ -70,11 +70,11 @@ export function getSelfUpdateUnavailableInstruction(
 	_npmCommand?: string[],
 	_updatePackageName = _packageName,
 ): string {
-	return "Self-update is disabled in this fork. Update reviewed source, then run: bun run install:local-pi";
+	return "Self-update is disabled in this fork. Replace pi only from a reviewed local build.";
 }
 
 export function getUpdateInstruction(_packageName: string): string {
-	return "Run from reviewed source: bun run install:local-pi";
+	return "Automatic updates are disabled. Use a reviewed local build.";
 }
 
 // =============================================================================
@@ -266,11 +266,6 @@ export function getSettingsPath(): string {
 /** Get path to tools directory */
 export function getToolsDir(): string {
 	return join(getAgentDir(), "tools");
-}
-
-/** Get path to managed binaries directory (fd, rg) */
-export function getBinDir(): string {
-	return join(getAgentDir(), "bin");
 }
 
 /** Get path to prompt templates directory */

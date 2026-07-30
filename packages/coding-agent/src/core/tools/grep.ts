@@ -171,7 +171,13 @@ export function createGrepToolDefinition(
 					try {
 						const rgPath = await ensureTool("rg", true);
 						if (!rgPath) {
-							settle(() => reject(new Error("ripgrep (rg) is not available and could not be downloaded")));
+							settle(() =>
+								reject(
+									new Error(
+										"ripgrep (rg) is not available. Install it with your system package manager and add it to PATH.",
+									),
+								),
+							);
 							return;
 						}
 

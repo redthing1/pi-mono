@@ -2,7 +2,7 @@
 
 # Pi Packages
 
-Pi packages bundle extensions, skills, prompt templates, and themes so you can share them through git or local paths. A package can declare resources in `package.json` under the `pi` key, or use conventional directories.
+Pi packages bundle extensions, skills, prompt templates, and themes from already-present local paths. A package can declare resources in `package.json` under the `pi` key, or use conventional directories.
 
 ## Table of Contents
 
@@ -20,76 +20,40 @@ Pi packages bundle extensions, skills, prompt templates, and themes so you can s
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install git:github.com/user/repo
-pi install git:github.com/user/repo@v1
-pi install https://github.com/user/repo  # raw URLs work too
 pi install /absolute/path/to/package
 pi install ./relative/path/to/package
-
-pi remove git:github.com/user/repo
-pi list                     # show installed packages from settings
-pi update                   # update packages, reconcile pinned git refs, then report fork self-update policy
-pi update --all             # update packages, reconcile pinned git refs, then report fork self-update policy
-pi update --extensions      # update packages and reconcile pinned git refs only
+pi remove ./relative/path/to/package
+pi list                     # show configured package paths
+pi update                   # report package and fork self-update policies
+pi update --extensions      # report the local-only package update policy
+pi update --models          # refresh model catalogs
 pi update --self            # show fork self-update policy
-pi update --self --force    # show fork self-update policy
-pi update git:github.com/user/repo      # update one package
-pi update --extension git:github.com/user/repo
 ```
 
-By default, `install` and `remove` write to global settings (`~/.pi/agent/settings.json`). Use `-l` to write to project settings (`.pi/settings.json`) instead. Project settings can be shared with your team. Missing configured packages are not installed automatically on startup; install them explicitly with `pi install`.
+By default, `install` and `remove` write to global settings (`~/.pi/agent/settings.json`). Use `-l` to write to project settings (`.pi/settings.json`) instead. Project settings can be shared with your team. Missing configured packages are never installed automatically.
 
 These commands manage pi packages, not the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall).
 
-To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:
+To try a package without adding it to settings, use `--extension` or `-e` with an already-present local path:
 
 ```bash
-pi -e git:github.com/user/repo
+pi -e ./local-package
 ```
 
 ## Package Sources
 
-Pi accepts git sources and local paths in settings and `pi install`.
+Pi accepts local paths in settings and `pi install`. Registry, Git, and URL sources are disabled: pi does not fetch, clone, hydrate, or install remote package code. Existing legacy entries are inert and can be removed with `pi remove`.
 
-### npm Registry Sources
+### Legacy Remote Sources
 
 ```
 npm:@scope/pkg@1.2.3
 npm:pkg
+git:github.com/example/package
+https://github.com/example/package
 ```
 
-Registry package installs are disabled in this fork. Existing npm entries can still be removed from settings, but new package installs should use git or local paths.
-
-### git
-
-```
-git:github.com/user/repo@v1
-git:git@github.com:user/repo@v1
-https://github.com/user/repo@v1
-ssh://git@github.com/user/repo@v1
-```
-
-- Without `git:` prefix, only protocol URLs are accepted (`https://`, `http://`, `ssh://`, `git://`).
-- With `git:` prefix, shorthand formats are accepted, including `github.com/user/repo` and `git@github.com:user/repo`.
-- HTTPS and SSH URLs are both supported.
-- SSH URLs use your configured SSH keys automatically (respects `~/.ssh/config`).
-- For non-interactive runs (for example CI), you can set `GIT_TERMINAL_PROMPT=0` to disable credential prompts and set `GIT_SSH_COMMAND` (for example `ssh -o BatchMode=yes -o ConnectTimeout=5`) to fail fast.
-- Refs are pinned tags or commits. `pi update --extensions` and `pi update --all` do not move them to newer refs, but they do reconcile an existing clone to the configured ref.
-- Use `pi install git:host/user/repo@new-ref` to update settings and move an existing package to a new pinned ref.
-- Cloned to `~/.pi/agent/git/<host>/<path>` (global) or `.pi/git/<host>/<path>` (project).
-- Runs `bun install --omit=dev --omit=peer --ignore-scripts` after clone or pull if `package.json` exists. If `bun.lock` is present, `--frozen-lockfile` is also used.
-
-**SSH examples:**
-```bash
-# git@host:path shorthand (requires git: prefix)
-pi install git:git@github.com:user/repo
-
-# ssh:// protocol format
-pi install ssh://git@github.com/user/repo
-
-# With version ref
-pi install git:git@github.com:user/repo@v1.0.0
-```
+Registry and Git sources are retained only for recognizing and removing old settings entries. New package sources must be local paths.
 
 ### Local Paths
 
@@ -153,11 +117,11 @@ If no `pi` manifest is present, pi auto-discovers resources from these directori
 
 ## Dependencies
 
-Third party runtime dependencies belong in `dependencies` in `package.json`. Dependencies that do not register extensions, skills, prompt templates, or themes also belong in `dependencies`. For git packages, pi installs only `dependencies` with Bun.
+Pi never resolves, fetches, or installs package dependencies at runtime. A package may declare runtime dependencies in `package.json` for its own build process, but a package loaded by pi must already vendor or bundle every module it needs.
 
 Pi bundles core packages for extensions and skills. If you import any of these, list them in `peerDependencies` with a `"*"` range and do not bundle them: `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `typebox`.
 
-Other pi packages must be bundled in your tarball. Add them to `dependencies` and `bundledDependencies`, then reference their resources through `node_modules/` paths. Pi loads packages with separate module roots, so separate installs do not collide or share modules.
+Other pi packages must be bundled with the package, then referenced through vendored `node_modules/` paths. Pi loads packages with separate module roots, so separate packages do not collide or share modules.
 
 Example:
 
@@ -181,9 +145,9 @@ Filter what a package loads using the object form in settings:
 ```json
 {
   "packages": [
-    "npm:simple-pkg",
+    "./packages/simple-pkg",
     {
-      "source": "npm:my-package",
+      "source": "./packages/my-package",
       "extensions": ["extensions/*.ts", "!extensions/legacy.ts"],
       "skills": [],
       "prompts": ["prompts/review.md"],
@@ -210,6 +174,5 @@ Use `pi config` to enable or disable extensions, skills, prompt templates, and t
 
 Packages can appear in both global and project settings. If the same package appears in both, the project entry wins unless the project entry has `autoload: false`, in which case it is applied as a delta over the global entry. Identity is determined by:
 
-- npm: package name
-- git: repository URL without ref
+- legacy npm: package name (only for identifying and removing old settings entries)
 - local: resolved absolute path

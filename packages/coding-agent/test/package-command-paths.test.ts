@@ -3,16 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
-
-function expectAndClearExitCode(exitCode: typeof process.exitCode): void {
-	expect(process.exitCode).toBe(exitCode);
-	process.exitCode = undefined;
-}
+import { handlePackageCommand } from "../src/package-manager-cli.ts";
 
 describe("package commands", () => {
 	let tempDir: string;
@@ -21,8 +18,10 @@ describe("package commands", () => {
 	let packageDir: string;
 	let originalCwd: string;
 	let originalAgentDir: string | undefined;
-	let originalPiPackageDir: string | undefined;
-	let originalExecPath: string;
+
+	async function runPackageCommandDirectly(args: string[]): Promise<void> {
+		expect(await handlePackageCommand(args)).toBe(true);
+	}
 
 	function extensionPaths(
 		packageRoot: string,
@@ -41,6 +40,7 @@ describe("package commands", () => {
 			themes: [],
 		};
 	}
+
 	beforeEach(() => {
 		tempDir = join(tmpdir(), `pi-package-commands-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
@@ -52,8 +52,6 @@ describe("package commands", () => {
 
 		originalCwd = process.cwd();
 		originalAgentDir = process.env[ENV_AGENT_DIR];
-		originalPiPackageDir = process.env.PI_PACKAGE_DIR;
-		originalExecPath = process.execPath;
 		process.exitCode = undefined;
 		vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
 			if (code === undefined || code === null || Number(code) === 0) {
@@ -77,12 +75,6 @@ describe("package commands", () => {
 		} else {
 			process.env[ENV_AGENT_DIR] = originalAgentDir;
 		}
-		if (originalPiPackageDir === undefined) {
-			delete process.env.PI_PACKAGE_DIR;
-		} else {
-			process.env.PI_PACKAGE_DIR = originalPiPackageDir;
-		}
-		Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -232,16 +224,7 @@ describe("package commands", () => {
 	it("does not prompt or ask extensions for project trust during update", async () => {
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
-		const fakeNpmPath = join(tempDir, "fake-project-npm.cjs");
-		const recordPath = join(tempDir, "project-update.json");
-		writeFileSync(
-			fakeNpmPath,
-			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
-		);
-		writeFileSync(
-			join(projectDir, ".pi", "settings.json"),
-			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
-		);
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:fake-package"] }));
 		let projectTrustCalled = false;
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -260,32 +243,21 @@ describe("package commands", () => {
 			).resolves.toBeUndefined();
 
 			expect(projectTrustCalled).toBe(false);
-			expect(existsSync(recordPath)).toBe(false);
 			expect(process.exitCode).toBeUndefined();
 		} finally {
 			logSpy.mockRestore();
 		}
 	});
 
-	it("uses saved project trust during update without installing registry packages", async () => {
+	it("uses saved project trust during update without running configured registry commands", async () => {
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");
-		const recordPath = join(tempDir, "trusted-project-update.json");
-		writeFileSync(
-			fakeNpmPath,
-			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
-		);
-		writeFileSync(
-			join(projectDir, ".pi", "settings.json"),
-			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
-		);
+		writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:fake-package"] }));
 		new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
 			await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
 
-			expect(existsSync(recordPath)).toBe(false);
 			expect(process.exitCode).toBeUndefined();
 		} finally {
 			logSpy.mockRestore();
@@ -311,6 +283,22 @@ describe("package commands", () => {
 		}
 	});
 
+	it("blocks local package changes when project is untrusted", async () => {
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(join(projectDir, ".pi", "settings.json"), "{}");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(main(["install", "-l", "./local-package"])).resolves.toBeUndefined();
+
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("Project is not trusted. Use --approve to modify local package config.");
+			expect(process.exitCode).toBe(1);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+
 	it("allows local package install to initialize fresh project settings", async () => {
 		await main(["install", "-l", packageDir]);
 
@@ -319,7 +307,6 @@ describe("package commands", () => {
 		expect(settings.packages?.length).toBe(1);
 		const stored = settings.packages?.[0] ?? "";
 		expect(realpathSync(join(projectDir, ".pi", stored))).toBe(realpathSync(packageDir));
-		expect(process.exitCode).toBeUndefined();
 	});
 
 	it("shows install subcommand help", async () => {
@@ -333,33 +320,53 @@ describe("package commands", () => {
 			expect(stdout).toContain("Usage:");
 			expect(stdout).toContain("pi install <source> [-l]");
 			expect(errorSpy).not.toHaveBeenCalled();
-			expect(process.exitCode).toBeUndefined();
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
-	it("blocks local package changes when project is untrusted", async () => {
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(join(projectDir, ".pi", "settings.json"), "{}");
+
+	it("refreshes only model catalogs with update --models", async () => {
+		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
+		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		try {
-			await expect(main(["install", "-l", "./local-package"])).resolves.toBeUndefined();
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
 
-			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stderr).toContain("Project is not trusted. Use --approve to modify local package config.");
-			expectAndClearExitCode(1);
-		} finally {
-			errorSpy.mockRestore();
-		}
+		expect(create).toHaveBeenCalledWith({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+			allowModelNetwork: false,
+		});
+		expect(refresh).toHaveBeenCalledWith({
+			allowNetwork: true,
+			force: true,
+			signal: expect.any(AbortSignal),
+		});
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exit).not.toHaveBeenCalled();
+	});
+
+	it("rejects update --models combined with another update target", async () => {
+		const create = vi.spyOn(ModelRuntime, "create");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models", "--self"])).resolves.toBeUndefined();
+
+		expect(create).not.toHaveBeenCalled();
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"--models cannot be combined with --self",
+		);
+		expect(process.exitCode).toBe(1);
 	});
 
 	it("cycles project package overrides in config local mode", async () => {
 		const storage = new InMemorySettingsStorage();
-		storage.withLock("global", () => JSON.stringify({ packages: ["npm:pi-tools"] }));
+		storage.withLock("global", () => JSON.stringify({ packages: ["./pi-tools"] }));
 		const settingsManager = SettingsManager.fromStorage(storage, { projectTrusted: true });
-		const resolvedPaths = extensionPaths(join(tempDir, "pkg"), "npm:pi-tools", "user", ["bar.ts"]);
+		const resolvedPaths = extensionPaths(join(tempDir, "pkg"), "./pi-tools", "user", ["bar.ts"]);
 		const selector = new ConfigSelectorComponent(
 			{ global: resolvedPaths, project: resolvedPaths },
 			settingsManager,
@@ -374,12 +381,12 @@ describe("package commands", () => {
 
 		selector.getResourceList().handleInput(" ");
 		expect(settingsManager.getProjectSettings().packages).toEqual([
-			{ source: "npm:pi-tools", autoload: false, extensions: ["-extensions/bar.ts"] },
+			{ source: "../../agent/pi-tools", autoload: false, extensions: ["-extensions/bar.ts"] },
 		]);
 
 		selector.getResourceList().handleInput(" ");
 		expect(settingsManager.getProjectSettings().packages).toEqual([
-			{ source: "npm:pi-tools", autoload: false, extensions: ["+extensions/bar.ts"] },
+			{ source: "../../agent/pi-tools", autoload: false, extensions: ["+extensions/bar.ts"] },
 		]);
 
 		selector.getResourceList().handleInput(" ");
@@ -395,7 +402,7 @@ describe("package commands", () => {
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --unknown for "install".');
 			expect(stderr).toContain('Use "pi --help" or "pi install <source> [-l] [--approve|--no-approve]".');
-			expectAndClearExitCode(1);
+			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();
 		}
@@ -411,99 +418,77 @@ describe("package commands", () => {
 			expect(stderr).toContain("Missing install source.");
 			expect(stderr).toContain("Usage: pi install <source> [-l]");
 			expect(stderr).not.toContain("at ");
-			expectAndClearExitCode(1);
+			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();
 		}
 	});
 
-	it("reports the fork policy for forced self updates without checking the api", async () => {
-		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
-		const recordPath = join(tempDir, "self-update.json");
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(
-			fakeNpmPath,
-			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
-		);
-		writeFileSync(
-			join(agentDir, "settings.json"),
-			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath] }, null, 2),
-		);
-		writeFileSync(
-			join(projectDir, ".pi", "settings.json"),
-			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath] }, null, 2),
-		);
+	it("disables self-update without checking the network", async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
-
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["update", "--self", "--force"])).resolves.toBeUndefined();
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
-			expectAndClearExitCode(1);
-			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stderr).toContain("self-update is disabled in this fork");
-			expect(stderr).toContain("bun run install:local-pi");
 			expect(fetchMock).not.toHaveBeenCalled();
-			expect(existsSync(recordPath)).toBe(false);
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				"pi self-update is disabled in this fork.",
+			);
+			expect(process.exitCode).toBe(1);
 		} finally {
-			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	it("updates extensions before reporting the disabled self-update policy for default update", async () => {
-		const settingsPath = join(agentDir, "settings.json");
-		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
-		const recordPath = join(tempDir, "extension-update.json");
-		writeFileSync(
-			fakeNpmPath,
-			`const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(process.argv.slice(2)));`,
-		);
-		writeFileSync(
-			settingsPath,
-			JSON.stringify({ packages: ["npm:pi-formatter"], npmCommand: [originalExecPath, fakeNpmPath] }, null, 2),
-		);
+	it("updates extensions before reporting the disabled self-update policy for --all", async () => {
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:legacy-package"] }));
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
-
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["update"])).resolves.toBeUndefined();
-			expectAndClearExitCode(1);
-			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stdout).toContain("Updated packages");
-			expect(stderr).toContain("self-update is disabled in this fork");
+			await expect(runPackageCommandDirectly(["update", "--all"])).resolves.toBeUndefined();
+
 			expect(fetchMock).not.toHaveBeenCalled();
-			expect(existsSync(recordPath)).toBe(false);
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				"Pi never downloads or installs update code. Use a reviewed local build.",
+			);
+			expect(process.exitCode).toBe(1);
 		} finally {
-			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	it("reports the fork policy for pi update aliases without checking the api", async () => {
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
-
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+	it("rejects registry package installs without modifying settings", async () => {
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
 		try {
-			await expect(main(["update", "pi"])).resolves.toBeUndefined();
+			await expect(main(["install", "npm:pi-formatter"])).resolves.toBeUndefined();
 
-			expectAndClearExitCode(1);
-			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stderr).toContain("self-update is disabled in this fork");
-			expect(stderr).toContain("bun run install:local-pi");
-			expect(fetchMock).not.toHaveBeenCalled();
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				"Registry package installs are disabled in this fork",
+			);
+			expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+			expect(process.exitCode).toBe(1);
 		} finally {
-			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("rejects remote Git package installs without modifying settings", async () => {
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(main(["install", "git:github.com/example/pi-package"])).resolves.toBeUndefined();
+
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				"Remote package sources are disabled in this fork",
+			);
+			expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+			expect(process.exitCode).toBe(1);
+		} finally {
 			errorSpy.mockRestore();
 		}
 	});
@@ -522,7 +507,7 @@ describe("package commands", () => {
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain("Did you mean npm:pi-formatter?");
 			expect(stdout).not.toContain("Updated pi-formatter");
-			expectAndClearExitCode(1);
+			expect(process.exitCode).toBe(1);
 
 			const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
 			expect(settings.packages).toContain("npm:pi-formatter");

@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
+import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
@@ -11,7 +13,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
-type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
+type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string } | { type: "models" };
 
 interface PackageCommandOptions {
 	command: PackageCommand;
@@ -44,7 +46,7 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "remove":
 			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
@@ -81,11 +83,8 @@ Options:
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
-  ${APP_NAME} install git:github.com/user/repo
-  ${APP_NAME} install git:git@github.com:user/repo
-  ${APP_NAME} install https://github.com/user/repo
-  ${APP_NAME} install ssh://git@github.com/user/repo
   ${APP_NAME} install ./local/path
+  ${APP_NAME} install /absolute/path/to/package
 `);
 			return;
 
@@ -102,7 +101,6 @@ Options:
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
-  ${APP_NAME} remove git:github.com/user/repo
   ${APP_NAME} uninstall ./local/path
 `);
 			return;
@@ -111,22 +109,23 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update installed git packages. Self-update is disabled in this fork; update reviewed source and run:
-  bun run install:local-pi
+Refresh model catalogs or show the fork self-update policy. Remote package updates are disabled; local package paths are used as-is. Pi never downloads or installs update code; replace it only from a reviewed local build.
 
 Options:
   --self                  Show the fork self-update policy
-  --extensions            Update installed packages only
-  --all                   Update packages, then report fork self-update policy
-  --extension <source>    Update one package only
+	--extensions            Report the local-only package update policy
+	--models                Refresh model catalogs only
+  --all                   Report package and fork self-update policies
+  --extension <source>    Check one local package path
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
   --force                 Accepted for upstream CLI compatibility; self-update remains disabled
 
 Short forms:
-  ${APP_NAME} update                Update extensions, then report self-update policy
-  ${APP_NAME} update --all          Update extensions, then report self-update policy
-  ${APP_NAME} update <source>       Update one package
+  ${APP_NAME} update                Report package and fork self-update policies
+  ${APP_NAME} update --all          Report package and fork self-update policies
+  ${APP_NAME} update --models       Refresh model catalogs only
+  ${APP_NAME} update <source>       Check one local package path
   ${APP_NAME} update pi             Show the fork self-update policy
 `);
 			return;
@@ -168,6 +167,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	let source: string | undefined;
 	let selfFlag = false;
 	let extensionsFlag = false;
+	let modelsFlag = false;
 	let allFlag = false;
 	let extensionFlagSource: string | undefined;
 
@@ -199,6 +199,15 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		if (arg === "--extensions") {
 			if (command === "update") {
 				extensionsFlag = true;
+			} else {
+				invalidOption = invalidOption ?? arg;
+			}
+			continue;
+		}
+
+		if (arg === "--models") {
+			if (command === "update") {
+				modelsFlag = true;
 			} else {
 				invalidOption = invalidOption ?? arg;
 			}
@@ -266,15 +275,24 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 
 	let updateTarget: UpdateTarget | undefined;
 	if (command === "update") {
-		if (allFlag && (selfFlag || extensionsFlag || extensionFlagSource)) {
+		if (allFlag && (selfFlag || extensionsFlag || modelsFlag || extensionFlagSource)) {
 			conflictingOptions =
-				conflictingOptions ?? "--all cannot be combined with --self, --extensions, or --extension";
+				conflictingOptions ?? "--all cannot be combined with --self, --extensions, --models, or --extension";
 		}
 		if (allFlag && source) {
 			conflictingOptions = conflictingOptions ?? "--all cannot be combined with a positional source";
 		}
 
-		if (extensionFlagSource) {
+		if (modelsFlag) {
+			if (selfFlag || extensionsFlag || allFlag || extensionFlagSource) {
+				conflictingOptions =
+					conflictingOptions ?? "--models cannot be combined with --self, --extensions, --all, or --extension";
+			}
+			if (source) {
+				conflictingOptions = conflictingOptions ?? "--models cannot be combined with a positional source";
+			}
+			updateTarget = { type: "models" };
+		} else if (extensionFlagSource) {
 			if (selfFlag || extensionsFlag || allFlag) {
 				conflictingOptions =
 					conflictingOptions ?? "--extension cannot be combined with --self, --extensions, or --all";
@@ -329,6 +347,42 @@ function updateTargetIncludesSelf(target: UpdateTarget): boolean {
 
 function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 	return target.type === "all" || target.type === "extensions";
+}
+
+async function refreshModelCatalogs(agentDir: string): Promise<void> {
+	const modelRuntime = await ModelRuntime.create({
+		authPath: join(agentDir, "auth.json"),
+		modelsPath: join(agentDir, "models.json"),
+		allowModelNetwork: false,
+	});
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 15_000);
+	try {
+		const result = await modelRuntime.refresh({
+			allowNetwork: true,
+			force: true,
+			signal: controller.signal,
+		});
+		if (result.aborted) {
+			throw new Error("Model catalog refresh timed out.");
+		}
+		if (result.errors.size > 0) {
+			const details = Array.from(result.errors, ([provider, error]) => `${provider}: ${error.message}`).join("; ");
+			throw new Error(`Could not refresh model catalogs: ${details}`);
+		}
+	} finally {
+		clearTimeout(timeout);
+	}
+	console.log(chalk.green("Model catalogs refreshed"));
+}
+
+function printSelfUpdateDisabled(): void {
+	console.error(chalk.red(`${APP_NAME} self-update is disabled in this fork.`));
+	console.error(chalk.dim("Pi never downloads or installs update code. Use a reviewed local build."));
+}
+
+function printPackageUpdatesDisabled(): void {
+	console.log(chalk.dim("Remote package updates are disabled; local package paths are used as-is."));
 }
 
 export interface PackageCommandRuntimeOptions {
@@ -521,6 +575,17 @@ export async function handlePackageCommand(
 		return true;
 	}
 
+	if (options.command === "update" && options.updateTarget?.type === "models") {
+		try {
+			await refreshModelCatalogs(getAgentDir());
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : "Unknown model catalog refresh error";
+			console.error(chalk.red(`Error: ${message}`));
+			process.exitCode = 1;
+		}
+		return true;
+	}
+
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const writesProjectPackageConfig = (options.command === "install" || options.command === "remove") && options.local;
@@ -606,15 +671,10 @@ export async function handlePackageCommand(
 				if (updateTargetIncludesExtensions(target)) {
 					const updateSource = target.type === "extensions" ? target.source : undefined;
 					await packageManager.update(updateSource);
-					if (updateSource) {
-						console.log(chalk.green(`Updated ${updateSource}`));
-					} else {
-						console.log(chalk.green("Updated packages"));
-					}
+					printPackageUpdatesDisabled();
 				}
 				if (updateTargetIncludesSelf(target)) {
-					console.error(chalk.red(`${APP_NAME} self-update is disabled in this fork.`));
-					console.error(chalk.dim("Update reviewed source, then run: bun run install:local-pi"));
+					printSelfUpdateDisabled();
 					process.exitCode = 1;
 				}
 				return true;

@@ -66,10 +66,10 @@ describe("detectInstallMethod", () => {
 
 	test("returns fork source-install update guidance", () => {
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Run from reviewed source: bun run install:local-pi",
+			"Automatic updates are disabled. Use a reviewed local build.",
 		);
 		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Self-update is disabled in this fork. Update reviewed source, then run: bun run install:local-pi",
+			"Self-update is disabled in this fork. Replace pi only from a reviewed local build.",
 		);
 	});
 });

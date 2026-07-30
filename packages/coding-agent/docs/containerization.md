@@ -25,9 +25,9 @@ Setup:
 
 ```bash
 cp -R packages/coding-agent/examples/extensions/gondolin ~/.pi/agent/extensions/gondolin
-cd ~/.pi/agent/extensions/gondolin
-bun install --ignore-scripts
 ```
+
+The copied extension must already include every dependency it needs; pi never fetches or installs extension code or dependencies.
 
 Run from the project you want mounted:
 
@@ -51,16 +51,12 @@ Run the whole `pi` process in Docker when you want the simplest local container 
 ```dockerfile
 FROM oven/bun:1.3.11-debian
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep \
-  && rm -rf /var/lib/apt/lists/*
+# The build context must already contain a reviewed, pre-provisioned checkout,
+# including the dependencies needed by pi-test.sh. Do not run a package installer here.
 COPY . /opt/pi-mono
-WORKDIR /opt/pi-mono
-RUN bun install --frozen-lockfile --ignore-scripts \
-  && bun run install:local-pi
 
 WORKDIR /workspace
-ENTRYPOINT ["pi"]
+ENTRYPOINT ["/opt/pi-mono/pi-test.sh"]
 ```
 
 Build and run:

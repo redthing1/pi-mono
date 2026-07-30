@@ -6,7 +6,7 @@ import hostedGitInfo from "hosted-git-info";
 export type GitSource = {
 	/** Always "git" for git sources */
 	type: "git";
-	/** Clone URL (always valid for git clone, without ref suffix) */
+	/** Canonical repository URL parsed from a legacy source; never used for transport. */
 	repo: string;
 	/** Git host domain (e.g., "github.com") */
 	host: string;
@@ -14,7 +14,7 @@ export type GitSource = {
 	path: string;
 	/** Git ref (branch, tag, commit) if specified */
 	ref?: string;
-	/** True if ref was specified (package won't be auto-updated) */
+	/** True if a ref was specified in the legacy source. */
 	pinned: boolean;
 };
 
@@ -81,7 +81,7 @@ function decodeForValidation(value: string): string | null {
 	}
 }
 
-function hasUnsafeGitInstallPart(value: string, allowSlash: boolean): boolean {
+function hasUnsafeGitSourcePart(value: string, allowSlash: boolean): boolean {
 	const decoded = decodeForValidation(value);
 	if (decoded === null) {
 		return true;
@@ -109,7 +109,7 @@ function buildGitSource(args: { repo: string; host: string; path: string; ref?: 
 	if (!args.host || !normalizedPath || normalizedPath.split("/").length < 2) {
 		return null;
 	}
-	if (hasUnsafeGitInstallPart(args.host, false) || hasUnsafeGitInstallPart(normalizedPath, true)) {
+	if (hasUnsafeGitSourcePart(args.host, false) || hasUnsafeGitSourcePart(normalizedPath, true)) {
 		return null;
 	}
 

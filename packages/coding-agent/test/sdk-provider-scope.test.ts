@@ -4,15 +4,20 @@ import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
-function registerModel(modelRegistry: ModelRegistry, provider: string, modelId: string): Model<Api> {
-	modelRegistry.registerProvider(provider, {
+function registerModel(
+	modelRuntime: ModelRuntime,
+	provider: string,
+	modelId: string,
+	apiKey = `${provider}-key`,
+): Model<Api> {
+	modelRuntime.registerProvider(provider, {
 		baseUrl: `https://${provider}.test/v1`,
-		apiKey: `${provider}-key`,
+		apiKey,
 		api: "openai-completions",
 		models: [
 			{
@@ -27,11 +32,19 @@ function registerModel(modelRegistry: ModelRegistry, provider: string, modelId: 
 		],
 	});
 
-	const model = modelRegistry.find(provider, modelId);
+	const model = modelRuntime.getModel(provider, modelId);
 	if (!model) {
 		throw new Error(`Failed to register ${provider}/${modelId}`);
 	}
 	return model;
+}
+
+async function createModelRuntime(): Promise<ModelRuntime> {
+	return ModelRuntime.create({
+		credentials: AuthStorage.inMemory(),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
 }
 
 function createExistingSession(model: Model<Api>): SessionManager {
@@ -61,17 +74,16 @@ describe("createAgentSession provider scope", () => {
 	});
 
 	it("does not restore a session model outside the provider scope", async () => {
-		const authStorage = AuthStorage.inMemory();
-		const modelRegistry = ModelRegistry.inMemory(authStorage);
-		const riskyModel = registerModel(modelRegistry, "risky-provider", "risky-model");
-		registerModel(modelRegistry, "safe-provider", "safe-model");
+		const modelRuntime = await createModelRuntime();
+		const riskyModel = registerModel(modelRuntime, "risky-provider", "risky-model");
+		const safeModel = registerModel(modelRuntime, "safe-provider", "safe-model");
+		await modelRuntime.refresh({ allowNetwork: false });
 		const sessionManager = createExistingSession(riskyModel);
 
 		const { session, modelFallbackMessage } = await createAgentSession({
 			cwd,
 			agentDir,
-			authStorage,
-			modelRegistry,
+			modelRuntime,
 			settingsManager: SettingsManager.inMemory(),
 			sessionManager,
 			providerScope: "safe-provider",
@@ -82,27 +94,70 @@ describe("createAgentSession provider scope", () => {
 		expect(modelFallbackMessage).toContain(
 			'Session model risky-provider/risky-model is outside provider scope "safe-provider"',
 		);
-		expect(modelFallbackMessage).toContain("using safe-provider/safe-model");
+		expect(modelFallbackMessage).toContain("Using safe-provider/safe-model");
 		expect(session.providerScope).toBe("safe-provider");
 		await expect(session.setModel(riskyModel)).rejects.toThrow(
 			'Model risky-provider/risky-model is outside provider scope "safe-provider"',
 		);
+		session.setScopedModels([{ model: riskyModel }, { model: safeModel }]);
+		expect(session.scopedModels).toEqual([{ model: safeModel }]);
 
 		session.dispose();
 	});
 
+	it("blocks direct provider requests outside the provider scope", async () => {
+		const modelRuntime = await createModelRuntime();
+		const riskyModel = registerModel(modelRuntime, "risky-provider", "risky-model");
+		const safeModel = registerModel(modelRuntime, "safe-provider", "safe-model");
+		await modelRuntime.refresh({ allowNetwork: false });
+
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			modelRuntime,
+			model: safeModel,
+			settingsManager: SettingsManager.inMemory(),
+			sessionManager: SessionManager.inMemory(),
+			providerScope: "safe-provider",
+		});
+
+		try {
+			await expect(session.agent.streamFunction(riskyModel, { messages: [] }, {})).rejects.toThrow(
+				'Model risky-provider/risky-model is outside provider scope "safe-provider"',
+			);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("rejects an unknown provider scope before creating a session", async () => {
+		const modelRuntime = await createModelRuntime();
+		registerModel(modelRuntime, "safe-provider", "safe-model");
+		await modelRuntime.refresh({ allowNetwork: false });
+
+		await expect(
+			createAgentSession({
+				cwd,
+				agentDir,
+				modelRuntime,
+				settingsManager: SettingsManager.inMemory(),
+				sessionManager: SessionManager.inMemory(),
+				providerScope: "missing-provider",
+			}),
+		).rejects.toThrow('Unknown provider "missing-provider"');
+	});
+
 	it("uses provider scope from settings when no explicit option is provided", async () => {
-		const authStorage = AuthStorage.inMemory();
-		const modelRegistry = ModelRegistry.inMemory(authStorage);
-		const riskyModel = registerModel(modelRegistry, "risky-provider", "risky-model");
-		registerModel(modelRegistry, "safe-provider", "safe-model");
+		const modelRuntime = await createModelRuntime();
+		const riskyModel = registerModel(modelRuntime, "risky-provider", "risky-model");
+		registerModel(modelRuntime, "safe-provider", "safe-model");
+		await modelRuntime.refresh({ allowNetwork: false });
 		const sessionManager = createExistingSession(riskyModel);
 
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
-			authStorage,
-			modelRegistry,
+			modelRuntime,
 			settingsManager: SettingsManager.inMemory({ providerScope: "safe-provider" }),
 			sessionManager,
 		});
@@ -115,16 +170,16 @@ describe("createAgentSession provider scope", () => {
 	});
 
 	it("does not fall back globally when no model is available inside the provider scope", async () => {
-		const authStorage = AuthStorage.inMemory();
-		const modelRegistry = ModelRegistry.inMemory(authStorage);
-		const riskyModel = registerModel(modelRegistry, "risky-provider", "risky-model");
+		const modelRuntime = await createModelRuntime();
+		const riskyModel = registerModel(modelRuntime, "risky-provider", "risky-model");
+		registerModel(modelRuntime, "safe-provider", "safe-model", "$SAFE_PROVIDER_TEST_KEY");
+		await modelRuntime.refresh({ allowNetwork: false });
 		const sessionManager = createExistingSession(riskyModel);
 
 		const { session, modelFallbackMessage } = await createAgentSession({
 			cwd,
 			agentDir,
-			authStorage,
-			modelRegistry,
+			modelRuntime,
 			settingsManager: SettingsManager.inMemory(),
 			sessionManager,
 			providerScope: "safe-provider",

@@ -33,7 +33,7 @@ Important risks include:
 
 ## Dependency Principles
 
-- Use Bun for JavaScript dependency installation and lockfile management.
+- Pi runtime commands run without dependency installation; Pi never fetches or installs third-party package code.
 - Commit and respect `bun.lock`.
 - Prefer exact direct dependency versions.
 - Avoid adding dependencies unless they provide clear value and have been reviewed.
@@ -43,39 +43,21 @@ Important risks include:
 
 ## Installation Principles
 
-- Prefer installing Pi from reviewed source in this repository.
-- If installing from git, prefer a full commit SHA over a branch or tag.
-- Avoid global registry installs for the primary trusted Pi installation.
+- Run Pi only from reviewed, already-provisioned local source or release artifacts.
+- Do not use Pi itself to acquire dependencies, packages, extensions, or update code.
 - Build and run from reproducible inputs where possible.
 - Self-update paths should not replace reviewed source with unreviewed registry output.
 
 ## Source Checkout Installation
 
-The preferred trusted install path is a reviewed source checkout:
-
-```bash
-bun run install:local-pi
-```
-
-The script performs a frozen Bun install, builds the Pi workspaces, registers the local coding-agent package with `bun link`, and installs the global `pi` binary as `@redthing1/pi-coding-agent` from that local link. It avoids a registry install for Pi.
-
-For a GitHub-hosted fork, clone the repository, check out a reviewed full commit SHA, then run the same command from the repository root:
-
-```bash
-git clone <fork-url> pi-mono
-cd pi-mono
-git checkout <full-commit-sha>
-bun run install:local-pi
-```
+This fork intentionally provides no installer that retrieves code or dependencies. Use a reviewed, already-provisioned local source checkout or release artifact. Pi's own runtime must never fetch, clone, hydrate, or install dependencies.
 
 ## Package And Extension Principles
 
 Pi packages and extensions are executable code. Installing one should be treated like adding a dependency to the harness itself.
 
-- Prefer local packages or reviewed git sources pinned to commit SHAs.
-- Avoid unpinned registry packages.
-- Avoid `latest` and other moving tags.
-- Disable or reject automatic installation of missing packages in hardened workflows.
+- Accept only already-present local package paths.
+- Reject registry, Git, and URL package sources, including automatic installation of missing packages.
 - Review package manifests, lifecycle scripts, dependency changes, and loaded entry points before enabling a package.
 - Keep project-local packages preferred over global packages where isolation is useful.
 

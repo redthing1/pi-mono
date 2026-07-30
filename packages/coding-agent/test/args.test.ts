@@ -193,9 +193,16 @@ describe("parseArgs", () => {
 			expect(result.noSession).toBe(true);
 		});
 
-		test("parses --zdr alias", () => {
+		test("parses --zdr as full zero-data-retention mode", () => {
 			const result = parseArgs(["--zdr"]);
 			expect(result.noSession).toBe(true);
+			expect(result.zdr).toBe(true);
+		});
+
+		test("parses --zdr-client as local ephemeral mode", () => {
+			const result = parseArgs(["--zdr-client"]);
+			expect(result.noSession).toBe(true);
+			expect(result.zdr).toBeUndefined();
 		});
 	});
 
@@ -331,6 +338,14 @@ describe("parseArgs", () => {
 		test("parses --offline flag", () => {
 			const result = parseArgs(["--offline"]);
 			expect(result.offline).toBe(true);
+		});
+	});
+
+	describe("--alt flag", () => {
+		test("parses --alt flag", () => {
+			const result = parseArgs(["--alt"]);
+			expect(result.alt).toBe(true);
+			expect(result.unknownFlags.has("alt")).toBe(false);
 		});
 	});
 

@@ -10,7 +10,7 @@
 
 ---
 
-Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
+Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) from already-present local paths.
 
 Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
 
@@ -60,10 +60,7 @@ I regularly publish my own `pi-mono` work sessions here:
 
 ## Quick Start
 
-```bash
-# From the repository root
-bun run install:local-pi
-```
+This fork has no remote installer or self-update path. Run pi only from a reviewed, already-provisioned local checkout or release artifact; pi never fetches or installs package code.
 
 Authenticate with an API key:
 
@@ -282,7 +279,7 @@ See [docs/settings.md](docs/settings.md) for all options.
 
 ### Project Trust
 
-On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, install missing project packages, and execute project extensions.
+On interactive startup, pi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.pi/agent/trust.json`. Trusting a project allows pi to load `.pi/settings.json` and `.pi` resources, use configured project packages, and execute project extensions.
 
 Before the trust decision, pi loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
 
@@ -301,7 +298,7 @@ Pi has two separate startup features:
 - **Update check:** disabled in this fork. `PI_SKIP_VERSION_CHECK=1` is retained for upstream compatibility, but startup does not fetch `https://pi.dev/api/latest-version`.
 - **Install/update telemetry:** after first install or a changelog-detected update, sends an anonymous version ping to `https://pi.dev/api/report-install`. This setting also controls optional provider attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Opt out by setting `enableInstallTelemetry` to `false` in `settings.json`, or by setting `PI_TELEMETRY=0`.
 
-Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including package update checks and install/update telemetry.
+Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including install/update telemetry.
 
 ---
 
@@ -392,33 +389,25 @@ Place in `~/.pi/agent/themes/`, `.pi/themes/`, or a [pi package](#pi-packages) t
 
 ### Pi Packages
 
-Bundle and share extensions, skills, prompts, and themes via git or local paths.
+Bundle extensions, skills, prompts, and themes from local paths.
 
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install git:github.com/user/repo
-pi install git:github.com/user/repo@v1  # tag or commit
-pi install git:git@github.com:user/repo
-pi install git:git@github.com:user/repo@v1  # tag or commit
-pi install https://github.com/user/repo
-pi install https://github.com/user/repo@v1      # tag or commit
-pi install ssh://git@github.com/user/repo
-pi install ssh://git@github.com/user/repo@v1    # tag or commit
-pi remove git:github.com/user/repo
-pi uninstall git:github.com/user/repo   # alias for remove
+pi install ./local-package
+pi install /absolute/path/to/package
+pi remove ./local-package
+pi uninstall ./local-package   # alias for remove
 pi list
-pi update                               # update packages, then report fork self-update policy
-pi update --all                         # update packages, then report fork self-update policy
-pi update --extensions                  # update packages only
+pi update                               # report package and fork self-update policies
+pi update --all                         # report package and fork self-update policies
+pi update --extensions                  # report the local-only package update policy
 pi update --self                        # show fork self-update policy
 pi update --self --force                # show fork self-update policy
-pi update git:github.com/user/repo      # update one package
 pi config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Git packages install to `~/.pi/agent/git/`; use `-l` for project-local installs under `.pi/git/`. Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update --extensions` and `pi update --all`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. If a git package has a `package.json`, pi installs runtime dependencies with `bun install --omit=dev --omit=peer --ignore-scripts`, using `--frozen-lockfile` when `bun.lock` is present.
-Registry package installs are disabled in this fork. Existing npm package entries can be removed from settings, but new package installs should use reviewed git or local paths.
+Pi accepts only already-present local package paths. Registry, Git, and URL package sources are disabled: pi never fetches, clones, hydrates, or installs remote package code. Legacy entries remain inert so they can be removed from settings. A local package must already vendor or bundle every runtime module it requires.
 
 Create a package by adding a `pi` key to `package.json`:
 
@@ -509,17 +498,17 @@ pi [options] [@files...] [messages...]
 pi install <source> [-l]     # Install package, -l for project-local
 pi remove <source> [-l]      # Remove package
 pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update packages; self-update reports fork policy
-pi update --all              # Update packages; self-update reports fork policy
-pi update --extensions       # Update packages only
+pi update [source|self|pi]   # Report package and fork self-update policies
+pi update --all              # Report package and fork self-update policies
+pi update --extensions       # Report the local-only package update policy
 pi update --self             # Show fork self-update policy
 pi update --self --force     # Show fork self-update policy
-pi update --extension <src>  # Update one package
+pi update --extension <src>  # Check one local package path
 pi list                      # List installed packages
 pi config                    # Enable/disable package resources
 ```
 
-`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. Remote package updates and self-update are disabled; `pi update` never prompts for project trust.
 
 ### Modes
 
@@ -575,7 +564,7 @@ Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 
 | Option | Description |
 |--------|-------------|
-| `-e`, `--extension <source>` | Load extension from path, npm, or git (repeatable) |
+| `-e`, `--extension <source>` | Load extension from an already-present local path (repeatable) |
 | `--no-extensions` | Disable extension discovery |
 | `--skill <path>` | Load skill (repeatable) |
 | `--no-skills` | Disable skill discovery |
@@ -653,7 +642,7 @@ pi --thinking high "Solve this complex problem"
 | `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
-| `PI_OFFLINE` | Disable startup network operations, including package update checks and install/update telemetry |
+| `PI_OFFLINE` | Disable startup network operations, including install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Compatibility flag; version polling is disabled in this fork |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |

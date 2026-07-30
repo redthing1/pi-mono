@@ -13,20 +13,17 @@ Pi runs on Android via [Termux](https://termux.dev/), a terminal emulator and Li
 # Update packages
 pkg update && pkg upgrade
 
-# Install dependencies
-pkg install bun termux-api git
-
-# Install pi from reviewed source
-git clone https://github.com/earendil-works/pi-mono
-cd pi-mono
-bun install --frozen-lockfile --ignore-scripts
-bun run install:local-pi
+# Provision Bun, Termux:API, and pi through your approved local process.
+# Use an already-provisioned reviewed pi checkout or release artifact.
+# Pi never fetches or installs package code.
+cd /path/to/pi-mono
+./pi-test.sh
 
 # Create config directory
 mkdir -p ~/.pi/agent
 
-# Run pi
-pi
+# Run pi again from the same reviewed local build
+./pi-test.sh
 ```
 
 ## Clipboard Support

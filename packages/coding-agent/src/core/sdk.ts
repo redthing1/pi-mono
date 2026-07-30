@@ -1,16 +1,15 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
-import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlm } from "./messages.ts";
-import { ModelRegistry } from "./model-registry.ts";
-import { findInitialModel } from "./model-resolver.ts";
+import { findInitialModel, resolveCliProvider } from "./model-resolver.ts";
+import { ModelRuntime } from "./model-runtime.ts";
 import {
 	mergePrivacyMode,
 	type PrivacyMode,
@@ -37,16 +36,19 @@ import {
 	withFileMutationQueue,
 } from "./tools/index.ts";
 
+// Preserve the pre-0.81 fallback for extensions that construct Agent instances
+// or invoke low-level agent loops without supplying streamFn. Agent core remains
+// provider-agnostic and does not import pi-ai/compat itself.
+setDefaultStreamFn(streamSimple);
+
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
 	/** Global config directory. Default: ~/.pi/agent */
 	agentDir?: string;
 
-	/** Auth storage for credentials. Default: AuthStorage.create(agentDir/auth.json) */
-	authStorage?: AuthStorage;
-	/** Model registry. Default: ModelRegistry.create(authStorage, agentDir/models.json) */
-	modelRegistry?: ModelRegistry;
+	/** Canonical model/auth runtime. Defaults to a runtime using agentDir/auth.json and models.json. */
+	modelRuntime?: ModelRuntime;
 
 	/** Model to use. Default: from settings, else first available */
 	model?: Model<any>;
@@ -179,11 +181,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;
 
-	// Use provided or create AuthStorage and ModelRegistry
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
-	const authStorage = options.authStorage ?? AuthStorage.create(authPath);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
+	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const privacy = mergePrivacyMode(options.privacy);
@@ -192,6 +192,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		(privacy.clientZdr
 			? SessionManager.inMemory(cwd)
 			: SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir)));
+	if (privacy.clientZdr && sessionManager.isPersisted()) {
+		throw new Error("client ZDR requires an in-memory session manager");
+	}
+	const isModelAllowed = (model: Model<any>): boolean => !privacy.remoteZdr || modelRuntime.isZdrModel(model);
+	const scopedModels = (options.scopedModels ?? []).filter((scoped) => isModelAllowed(scoped.model));
+	const requestedProviderScope = options.providerScope ?? settingsManager.getProviderScope();
+	const providerScopeResolution = requestedProviderScope
+		? resolveCliProvider({ cliProvider: requestedProviderScope, modelRuntime })
+		: undefined;
+	if (providerScopeResolution?.error) {
+		throw new Error(providerScopeResolution.error);
+	}
+	const providerScope = providerScopeResolution?.provider;
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
@@ -206,71 +219,57 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
-	const providerScopeName = options.providerScope ?? settingsManager.getProviderScope();
-	const providerScopeMatch = providerScopeName
-		? modelRegistry.getAll().find((candidate) => candidate.provider.toLowerCase() === providerScopeName.toLowerCase())
-		: undefined;
-	const providerScope = providerScopeMatch?.provider ?? providerScopeName;
-
+	if (model && !isModelAllowed(model)) {
+		throw new Error(ZDR_MODEL_REQUIRED_MESSAGE);
+	}
 	if (model && providerScope && model.provider !== providerScope) {
 		modelFallbackMessage = `Model ${model.provider}/${model.id} is outside provider scope "${providerScope}"`;
 		model = undefined;
 	}
 
-	let scopedModelsForSelection = options.scopedModels ?? [];
-	if (privacy.remoteZdr) {
-		scopedModelsForSelection = scopedModelsForSelection.filter((scoped) => modelRegistry.isZdrModel(scoped.model));
-		if (scopedModelsForSelection.length === 0 && !hasExistingSession && !model) {
-			scopedModelsForSelection = (await modelRegistry.getAvailable())
-				.filter((availableModel) => modelRegistry.isZdrModel(availableModel))
-				.map((availableModel) => ({ model: availableModel }));
-		}
-	}
-
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
-		const savedModelRef = `${existingSession.model.provider}/${existingSession.model.modelId}`;
-		if (providerScope && existingSession.model.provider !== providerScope) {
-			modelFallbackMessage = `Session model ${savedModelRef} is outside provider scope "${providerScope}"`;
-		} else {
-			const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
-			if (restoredModel && modelRegistry.hasConfiguredAuth(restoredModel)) {
-				model = restoredModel;
-			}
-			if (!model) {
-				modelFallbackMessage = `Could not restore model ${savedModelRef}`;
-			}
+		const restoredModel = modelRuntime.getModel(existingSession.model.provider, existingSession.model.modelId);
+		const sessionModelOutsideProviderScope =
+			providerScope !== undefined && existingSession.model.provider !== providerScope;
+		if (
+			restoredModel &&
+			!sessionModelOutsideProviderScope &&
+			isModelAllowed(restoredModel) &&
+			modelRuntime.hasConfiguredAuth(restoredModel.provider)
+		) {
+			model = restoredModel;
+		}
+		if (!model) {
+			modelFallbackMessage = sessionModelOutsideProviderScope
+				? `Session model ${existingSession.model.provider}/${existingSession.model.modelId} is outside provider scope "${providerScope}"`
+				: `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
 		}
 	}
 
 	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
-		const result =
-			privacy.remoteZdr && scopedModelsForSelection.length === 0
-				? {
-						model: undefined,
-						fallbackMessage: ZDR_MODEL_UNAVAILABLE_MESSAGE,
-					}
-				: await findInitialModel({
-						scopedModels: scopedModelsForSelection,
-						isContinuing: hasExistingSession,
-						providerScope,
-						defaultProvider: privacy.remoteZdr ? undefined : settingsManager.getDefaultProvider(),
-						defaultModelId: privacy.remoteZdr ? undefined : settingsManager.getDefaultModel(),
-						defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
-						modelRegistry,
-					});
+		const result = await findInitialModel({
+			scopedModels,
+			isContinuing: hasExistingSession,
+			providerScope,
+			defaultProvider: settingsManager.getDefaultProvider(),
+			defaultModelId: settingsManager.getDefaultModel(),
+			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			modelRuntime,
+			modelFilter: isModelAllowed,
+		});
 		model = result.model;
 		if (!model) {
-			modelFallbackMessage =
-				result.fallbackMessage ??
-				(providerScope
-					? `${modelFallbackMessage ? `${modelFallbackMessage}. ` : ""}No authenticated models available for provider "${providerScope}". Provider scope prevents fallback to another provider.`
-					: formatNoModelsAvailableMessage());
+			modelFallbackMessage = privacy.remoteZdr
+				? providerScope
+					? `No ZDR-approved model is available for provider "${providerScope}".`
+					: ZDR_MODEL_UNAVAILABLE_MESSAGE
+				: providerScope
+					? `No authenticated models available for provider "${providerScope}". Provider scope prevents fallback to another provider.`
+					: formatNoModelsAvailableMessage();
 		} else if (modelFallbackMessage) {
-			modelFallbackMessage += providerScope
-				? `. Provider scope "${providerScope}" is active; using ${model.provider}/${model.id}`
-				: `. Using ${model.provider}/${model.id}`;
+			modelFallbackMessage += `. Using ${model.provider}/${model.id}`;
 		}
 	}
 
@@ -292,9 +291,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
-		if (privacy.remoteZdr && !modelRegistry.isZdrModel(model)) {
-			throw new Error(ZDR_MODEL_REQUIRED_MESSAGE);
-		}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
@@ -356,11 +352,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
-			const auth = await modelRegistry.getApiKeyAndHeaders(model);
-			if (!auth.ok) {
-				throw new Error(auth.error);
+			if (providerScope && model.provider !== providerScope) {
+				throw new Error(`Model ${model.provider}/${model.id} is outside provider scope "${providerScope}"`);
 			}
-			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
+			if (privacy.remoteZdr && !modelRuntime.isZdrModel(model)) {
+				throw new Error(ZDR_MODEL_REQUIRED_MESSAGE);
+			}
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
@@ -369,28 +366,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			let headers = mergeProviderAttributionHeaders(
-				model,
-				settingsManager,
-				options?.sessionId,
-				auth.headers,
-				options?.headers,
-			);
-			// Let extensions inject/adjust per-request headers (e.g. tracing, session correlation)
-			// after static assembly, before the provider HTTP call.
 			const headerRunner = extensionRunnerRef.current;
-			if (headerRunner?.hasHandlers("before_provider_headers")) {
-				headers = await headerRunner.emitBeforeProviderHeaders(headers ?? {});
-			}
-			return streamSimple(model, context, {
+			return modelRuntime.streamSimple(model, context, {
 				...options,
-				apiKey: auth.apiKey,
-				env,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				headers,
+				transformHeaders: async (requestHeaders) => {
+					const headers = mergeProviderAttributionHeaders(
+						model,
+						settingsManager,
+						options?.sessionId,
+						requestHeaders,
+					);
+					return headerRunner?.hasHandlers("before_provider_headers")
+						? headerRunner.emitBeforeProviderHeaders(headers ?? {})
+						: (headers ?? {});
+				},
 			});
 		},
 		onPayload: async (payload, _model) => {
@@ -443,11 +436,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager,
 		settingsManager,
 		cwd,
-		scopedModels: options.scopedModels,
+		scopedModels,
 		providerScope,
 		resourceLoader,
 		customTools: options.customTools,
-		modelRegistry,
+		modelRuntime,
 		initialActiveToolNames,
 		allowedToolNames,
 		excludedToolNames,

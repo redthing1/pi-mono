@@ -3,9 +3,9 @@
  */
 
 import chalk from "chalk";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import { CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
 const MIGRATION_GUIDE_URL =
@@ -172,52 +172,7 @@ function migrateKeybindingsConfigFile(): void {
 }
 
 /**
- * Move fd/rg binaries from tools/ to bin/ if they exist.
- */
-function migrateToolsToBin(): void {
-	const agentDir = getAgentDir();
-	const toolsDir = join(agentDir, "tools");
-	const binDir = getBinDir();
-
-	if (!existsSync(toolsDir)) return;
-
-	const binaries = ["fd", "rg", "fd.exe", "rg.exe"];
-	let movedAny = false;
-
-	for (const bin of binaries) {
-		const oldPath = join(toolsDir, bin);
-		const newPath = join(binDir, bin);
-
-		if (existsSync(oldPath)) {
-			if (!existsSync(binDir)) {
-				mkdirSync(binDir, { recursive: true });
-			}
-			if (!existsSync(newPath)) {
-				try {
-					renameSync(oldPath, newPath);
-					movedAny = true;
-				} catch {
-					// Ignore errors
-				}
-			} else {
-				// Target exists, just delete the old one
-				try {
-					rmSync?.(oldPath, { force: true });
-				} catch {
-					// Ignore
-				}
-			}
-		}
-	}
-
-	if (movedAny) {
-		console.log(chalk.green(`Migrated managed binaries tools/ → bin/`));
-	}
-}
-
-/**
  * Check for deprecated hooks/ and tools/ directories.
- * Note: tools/ may contain fd/rg binaries extracted by pi, so only warn if it has other files.
  */
 function checkDeprecatedExtensionDirs(baseDir: string, label: string): string[] {
 	const hooksDir = join(baseDir, "hooks");
@@ -229,15 +184,9 @@ function checkDeprecatedExtensionDirs(baseDir: string, label: string): string[] 
 	}
 
 	if (existsSync(toolsDir)) {
-		// Check if tools/ contains anything other than fd/rg (which are auto-extracted binaries)
 		try {
 			const entries = readdirSync(toolsDir);
-			const customTools = entries.filter((e) => {
-				const lower = e.toLowerCase();
-				return (
-					lower !== "fd" && lower !== "rg" && lower !== "fd.exe" && lower !== "rg.exe" && !e.startsWith(".") // Ignore .DS_Store and other hidden files
-				);
-			});
+			const customTools = entries.filter((entry) => !entry.startsWith("."));
 			if (customTools.length > 0) {
 				warnings.push(
 					`${label} tools/ directory contains custom tools. Custom tools have been merged into extensions.`,
@@ -308,7 +257,6 @@ export function runMigrations(cwd: string): {
 } {
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
-	migrateToolsToBin();
 	migrateKeybindingsConfigFile();
 	const deprecationWarnings = migrateExtensionSystem(cwd);
 	return { migratedAuthProviders, deprecationWarnings };

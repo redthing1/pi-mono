@@ -4,13 +4,7 @@ Pi is a minimal terminal coding harness. It is designed to stay small at the cor
 
 ## Quick start
 
-Install Pi from a reviewed source checkout:
-
-```bash
-git clone https://github.com/redthing1/pi-mono
-cd pi-mono
-bun run install:local-pi
-```
+This fork has no remote installer or self-update path. Run pi only from a reviewed, already-provisioned local checkout or release artifact; pi never fetches or installs package code.
 
 To uninstall pi itself:
 
@@ -33,6 +27,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Quickstart](quickstart.md) - install, authenticate, and run a first session.
 - [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.
+- [llama.cpp](llama-cpp.md) - run a local router and manage models with `/llama`.
 - [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
 - [Containerization](containerization.md) - sandbox pi with Gondolin, Docker, or OpenShell.
 - [Settings](settings.md) - global and project settings.
@@ -59,6 +54,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 
 ## Reference
 
+- [Environment variables](environment-variables.md) - Pi process configuration and session metadata available to bash tools.
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
 
 ## Platform setup

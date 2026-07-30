@@ -4,15 +4,7 @@ This page gets you from install to a useful first pi session.
 
 ## Install From Source
 
-The trusted install path for this fork is a reviewed source checkout:
-
-```bash
-git clone https://github.com/redthing1/pi-mono
-cd pi-mono
-bun run install:local-pi
-```
-
-The install script uses the committed Bun lockfile, builds the workspaces, and links the global `pi` binary from this checkout.
+This fork has no remote installer or self-update path. Run pi only from a reviewed, already-provisioned local checkout or release artifact; pi never fetches or installs package code.
 
 ### Uninstall
 

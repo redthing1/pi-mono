@@ -1,4 +1,4 @@
-import { Editor, type Terminal, TUI } from "@earendil-works/pi-tui";
+import { Editor, type Terminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -38,7 +38,7 @@ describe("InteractiveMode key handlers", () => {
 	});
 
 	test("saves a cleared Ctrl-C draft to editor history", () => {
-		const tui = new TUI(new FakeTerminal());
+		const tui = new TuiMainScreen(new FakeTerminal());
 		const editor = new Editor(tui, getEditorTheme());
 		editor.setText("half written prompt");
 		const requestRender = vi.fn();

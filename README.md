@@ -49,12 +49,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ## Development
 
 ```bash
-bun install          # Install all dependencies
-bun run install:local-pi  # Install pi from this checkout
-bun run build        # Build all packages
-bun run check        # Lint, format, and type check
-./test.sh            # Run tests (skips LLM-dependent tests without API keys)
-./pi-test.sh         # Run pi from sources (can be run from any directory)
+# Dependencies must already be provisioned from reviewed local artifacts.
+BUN_AUTO_INSTALL=0 bun --no-install run check  # Lint, format, and type check
+./test.sh                                      # Run tests (skips LLM-dependent tests without API keys)
+./pi-test.sh                                   # Run pi from sources (can be run from any directory)
 ```
 
 > **Note:** `bun run check` requires `bun run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
@@ -66,9 +64,9 @@ We treat dependency changes as reviewed code changes.
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
 - `bun.lock` is the dependency ground truth and must be updated intentionally.
 - `bun run check` verifies pinned direct deps and native TypeScript import compatibility.
-- The trusted install path is a reviewed source checkout via `bun run install:local-pi`.
-- Registry package installs and automatic self-update are disabled in this fork.
-- Local and git Pi packages remain supported; git package dependencies install with Bun using `--ignore-scripts`.
+- Pi has no runtime installer: use only an already-provisioned, reviewed local checkout or release artifact.
+- Registry, Git, and URL Pi package sources and automatic self-update are disabled in this fork.
+- Pi packages must be already-present local paths with their runtime code bundled or vendored.
 - Review upstream dependency and installer changes before adopting them.
 
 ## Share your OSS coding agent sessions

@@ -65,7 +65,8 @@ export type DefaultProjectTrust = "ask" | "always" | "never";
 export type TransportSetting = Transport;
 
 /**
- * Package source for npm/git packages.
+ * Package source for local packages. Legacy registry and Git entries remain
+ * representable only so users can remove them from existing settings.
  * - String form: load all resources from the package
  * - Object form: filter which resources to load
  * - autoload=false: start empty and only apply explicit resource patterns
@@ -102,12 +103,11 @@ export interface Settings {
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
-	npmCommand?: string[]; // Legacy command used for npm package metadata lookup, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
-	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
+	packages?: PackageSource[]; // Array of local package sources (legacy npm/git entries are inert)
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
@@ -438,6 +438,10 @@ export class SettingsManager {
 			}
 			delete retrySettings.maxDelayMs;
 		}
+
+		// Registry package commands are disabled in this fork. Discard the old
+		// command override rather than retaining a dormant execution surface.
+		delete settings.npmCommand;
 
 		return settings as Settings;
 	}
@@ -875,7 +879,7 @@ export class SettingsManager {
 		return this.settings.showCacheMissNotices ?? false;
 	}
 
-	getExternalEditorCommand(): string | undefined {
+	getExternalEditorCommand(): string {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
 			return configuredEditor;
@@ -938,16 +942,6 @@ export class SettingsManager {
 	setShellCommandPrefix(prefix: string | undefined): void {
 		this.globalSettings.shellCommandPrefix = prefix;
 		this.markModified("shellCommandPrefix");
-		this.save();
-	}
-
-	getNpmCommand(): string[] | undefined {
-		return this.settings.npmCommand ? [...this.settings.npmCommand] : undefined;
-	}
-
-	setNpmCommand(command: string[] | undefined): void {
-		this.globalSettings.npmCommand = command ? [...command] : undefined;
-		this.markModified("npmCommand");
 		this.save();
 	}
 
