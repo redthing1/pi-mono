@@ -315,7 +315,7 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	}
 }
 
-async function createSessionManager(
+export async function createSessionManager(
 	parsed: Args,
 	cwd: string,
 	sessionDir: string | undefined,
@@ -380,8 +380,7 @@ async function createSessionManager(
 				settingsManager,
 			);
 			if (!selectedPath) {
-				console.log(chalk.dim("No session selected"));
-				process.exit(0);
+				return SessionManager.create(cwd, sessionDir);
 			}
 			return SessionManager.open(selectedPath, sessionDir);
 		} finally {

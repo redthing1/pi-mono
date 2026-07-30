@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S bun --no-install
 /**
  * CLI entry point for the refactored coding agent.
  * Uses main.ts with AgentSession and new mode modules.

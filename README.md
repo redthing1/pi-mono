@@ -66,7 +66,7 @@ We treat dependency changes as reviewed code changes.
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
 - `bun.lock` is the dependency ground truth and must be updated intentionally.
 - `bun run check` verifies pinned direct deps and native TypeScript import compatibility.
-- `bun run install:local-pi` explicitly hydrates the exact committed lockfile, builds the workspace, and globally links this checkout. The global Pi package is a local `link:` source.
+- `bun run install:local-pi` explicitly hydrates the exact committed lockfile without lifecycle scripts, builds from checked-in model data, and globally links this checkout. The link operation does not resolve a registry package.
 - Pi has no runtime installer that retrieves code. Runtime package sources and updates remain local-only.
 - Registry, Git, and URL Pi package sources and automatic self-update are disabled in this fork.
 - Pi packages must be already-present local paths with their runtime code bundled or vendored.

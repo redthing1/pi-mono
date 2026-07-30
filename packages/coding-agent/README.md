@@ -66,7 +66,7 @@ This fork has no runtime installer or self-update path. From a reviewed source c
 bun run install:local-pi
 ```
 
-This explicitly hydrates the exact committed `bun.lock`, builds the workspace, and globally links the local CLI. Pi itself never fetches or installs package code at runtime.
+This explicitly hydrates the exact committed `bun.lock` without lifecycle scripts, builds from checked-in model data, and globally links the local CLI. Pi itself never fetches or installs package code at runtime, including through Bun's automatic package resolver.
 
 Authenticate with an API key:
 
