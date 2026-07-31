@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
+import type { BashLaunchEvent } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashTool, createLocalBashOperations } from "../src/core/tools/bash.ts";
 import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
 import {
@@ -643,6 +644,54 @@ describe("Coding Agent Tools", () => {
 
 			const result = await bashWithoutPrefix.execute("test-prefix-3", { command: "echo no-prefix" });
 			expect(getTextOutput(result).trim()).toBe("no-prefix");
+		});
+
+		it("should guard the finalized launch and execute replacement operations", async () => {
+			let launch: BashLaunchEvent | undefined;
+			const replacement: BashOperations = {
+				exec: async (command, cwd, { onData }) => {
+					onData(Buffer.from(`${cwd}\n${command}`));
+					return { exitCode: 0 };
+				},
+			};
+			const guarded = createBashTool(testDir, {
+				commandPrefix: "prefix-command",
+				shellPath: "/synthetic/configured-shell",
+				spawnHook: (context) => ({ ...context, cwd: tmpdir(), command: `${context.command}\nspawn-hook` }),
+				launchHook: async (event) => {
+					launch = event;
+					return { operations: replacement };
+				},
+			});
+
+			const result = await guarded.execute("launch-call", { command: "submitted-command", timeout: 7 });
+
+			expect(launch).toEqual({
+				type: "bash_launch",
+				source: "tool",
+				id: "launch-call",
+				submittedCommand: "submitted-command",
+				command: "prefix-command\nsubmitted-command\nspawn-hook",
+				cwd: tmpdir(),
+				timeout: 7,
+				operationsKind: "local",
+				shellPath: "/synthetic/configured-shell",
+			});
+			expect(Object.isFrozen(launch)).toBe(true);
+			expect(getTextOutput(result)).toContain("prefix-command\nsubmitted-command\nspawn-hook");
+		});
+
+		it("should stop before execution when the finalized launch is blocked", async () => {
+			const operations = { exec: vi.fn(async () => ({ exitCode: 0 })) } satisfies BashOperations;
+			const guarded = createBashTool(testDir, {
+				operations,
+				launchHook: async () => ({ block: true, reason: "synthetic policy block" }),
+			});
+
+			await expect(guarded.execute("blocked-launch", { command: "echo no" })).rejects.toThrow(
+				"synthetic policy block",
+			);
+			expect(operations.exec).not.toHaveBeenCalled();
 		});
 
 		it("should coalesce streaming updates for chatty output", async () => {

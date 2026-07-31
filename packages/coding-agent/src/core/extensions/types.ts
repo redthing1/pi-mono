@@ -812,6 +812,34 @@ export interface ThinkingLevelSelectEvent {
 // User Bash Events
 // ============================================================================
 
+export type BashLaunchSource = "tool" | "direct";
+
+/**
+ * Fired immediately before Pi executes a finalized Bash command.
+ *
+ * The event is frozen at runtime. Handlers may block the launch or replace the
+ * Bash operations, but cannot rewrite the command or its execution context.
+ */
+export interface BashLaunchEvent {
+	readonly type: "bash_launch";
+	/** Where the command originated. */
+	readonly source: BashLaunchSource;
+	/** Optional tool-call or RPC identifier. */
+	readonly id?: string;
+	/** Command as submitted before Pi's configured command prefix is applied. */
+	readonly submittedCommand: string;
+	/** Exact command passed to the selected Bash operations. */
+	readonly command: string;
+	/** Exact working directory passed to the selected Bash operations. */
+	readonly cwd: string;
+	/** Timeout in seconds, when the caller supplied one. */
+	readonly timeout?: number;
+	/** Whether Pi selected its local backend or caller-provided operations. */
+	readonly operationsKind: "local" | "custom";
+	/** Configured shell path used by Pi's local backend. */
+	readonly shellPath?: string;
+}
+
 /** Fired when user executes a bash command via ! or !! prefix */
 export interface UserBashEvent {
 	type: "user_bash";
@@ -1056,6 +1084,7 @@ export type ExtensionEvent =
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
 	| ThinkingLevelSelectEvent
+	| BashLaunchEvent
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
@@ -1076,6 +1105,8 @@ export interface ToolCallEventResult {
 	block?: boolean;
 	reason?: string;
 }
+
+export type BashLaunchEventResult = { block: true; reason: string } | { operations: BashOperations };
 
 /** Result from user_bash event handler */
 export interface UserBashEventResult {
@@ -1228,6 +1259,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "bash_launch", handler: ExtensionHandler<BashLaunchEvent, BashLaunchEventResult>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;

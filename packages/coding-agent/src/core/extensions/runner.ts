@@ -14,6 +14,8 @@ import { DEFAULT_PRIVACY_MODE, type PrivacyMode } from "../privacy.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type {
+	BashLaunchEvent,
+	BashLaunchEventResult,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderHeadersEvent,
@@ -125,6 +127,7 @@ interface BeforeAgentStartCombinedResult {
 type RunnerEmitEvent = Exclude<
 	ExtensionEvent,
 	| ToolCallEvent
+	| BashLaunchEvent
 	| ProjectTrustEvent
 	| ToolResultEvent
 	| UserBashEvent
@@ -953,6 +956,25 @@ export class ExtensionRunner {
 		}
 
 		return result;
+	}
+
+	async emitBashLaunch(event: BashLaunchEvent): Promise<BashLaunchEventResult | undefined> {
+		const ctx = this.createContext();
+		let selectedOperations: BashLaunchEventResult | undefined;
+
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("bash_launch");
+			if (!handlers || handlers.length === 0) continue;
+
+			for (const handler of handlers) {
+				const handlerResult = (await handler(event, ctx)) as BashLaunchEventResult | undefined;
+				if (!handlerResult) continue;
+				if ("block" in handlerResult) return handlerResult;
+				selectedOperations ??= handlerResult;
+			}
+		}
+
+		return selectedOperations;
 	}
 
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {

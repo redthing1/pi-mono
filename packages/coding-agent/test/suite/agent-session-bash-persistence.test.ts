@@ -3,6 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import type { BashLaunchEvent } from "../../src/core/extensions/types.ts";
 import type { BashOperations } from "../../src/core/tools/bash.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
@@ -302,6 +303,84 @@ describe("AgentSession bash and persistence characterization", () => {
 
 		expect(result.output).toContain("hello from custom ops");
 		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("bashExecution");
+	});
+
+	it("guards finalized direct Bash after applying the configured prefix", async () => {
+		let launch: BashLaunchEvent | undefined;
+		const replacement: BashOperations = {
+			exec: async (command, _cwd, options) => {
+				options.onData(Buffer.from(command));
+				return { exitCode: 0 };
+			},
+		};
+		const harness = await createHarness({
+			settings: { shellCommandPrefix: "synthetic-prefix" },
+			extensionFactories: [
+				(pi) => {
+					pi.on("bash_launch", (event) => {
+						launch = event;
+						return { operations: replacement };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const result = await harness.session.executeBash("direct-command", undefined, { id: "direct-id" });
+
+		expect(launch?.source).toBe("direct");
+		expect(launch?.id).toBe("direct-id");
+		expect(launch?.submittedCommand).toBe("direct-command");
+		expect(launch?.command).toBe("synthetic-prefix\ndirect-command");
+		expect(Object.isFrozen(launch)).toBe(true);
+		expect(result.output).toBe("synthetic-prefix\ndirect-command");
+	});
+
+	it("cleans up direct Bash tracking when a finalized launch is blocked", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("bash_launch", () => ({ block: true, reason: "synthetic launch block" }));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await expect(harness.session.executeBash("blocked-command")).rejects.toThrow("synthetic launch block");
+
+		expect(harness.session.isBashRunning).toBe(false);
+	});
+
+	it("guards model Bash inside the faux-provider agent harness", async () => {
+		let launch: BashLaunchEvent | undefined;
+		const replacement: BashOperations = {
+			exec: async (_command, _cwd, options) => {
+				options.onData(Buffer.from("synthetic guarded output"));
+				return { exitCode: 0 };
+			},
+		};
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("bash_launch", (event) => {
+						launch = event;
+						return { operations: replacement };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("bash", { command: "model-command" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("run synthetic Bash");
+
+		expect(launch?.source).toBe("tool");
+		expect(launch?.submittedCommand).toBe("model-command");
+		expect(launch?.command).toBe("model-command");
+		expect(harness.session.messages.some((message) => message.role === "toolResult")).toBe(true);
 	});
 
 	it("streams bash output to the callback and session events", async () => {

@@ -15,7 +15,13 @@ import {
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
-import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type {
+	BashLaunchEvent,
+	BashLaunchEventResult,
+	ExtensionContext,
+	ToolDefinition,
+	ToolRenderResultOptions,
+} from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -194,6 +200,10 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Final, read-only launch guard invoked after command and spawn context resolution. */
+	launchHook?: (
+		event: BashLaunchEvent,
+	) => BashLaunchEventResult | Promise<BashLaunchEventResult | undefined> | undefined;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -321,6 +331,8 @@ export function createBashToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const launchHook = options?.launchHook;
+	const operationsKind = options?.operations ? "custom" : "local";
 	return {
 		name: "bash",
 		label: "bash",
@@ -339,6 +351,22 @@ export function createBashToolDefinition(
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
+			const launchHookResult = launchHook?.(
+				Object.freeze({
+					type: "bash_launch",
+					source: "tool",
+					id: _toolCallId,
+					submittedCommand: command,
+					command: spawnContext.command,
+					cwd: spawnContext.cwd,
+					timeout,
+					operationsKind,
+					shellPath: operationsKind === "local" ? options?.shellPath : undefined,
+				}),
+			);
+			const launchResult = launchHookResult instanceof Promise ? await launchHookResult : launchHookResult;
+			if (launchResult && "block" in launchResult) throw new Error(launchResult.reason);
+			const launchOperations = launchResult?.operations ?? ops;
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
@@ -426,7 +454,7 @@ export function createBashToolDefinition(
 			try {
 				let exitCode: number | null;
 				try {
-					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
+					const result = await launchOperations.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
 						signal,
 						timeout,

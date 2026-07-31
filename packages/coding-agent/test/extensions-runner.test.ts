@@ -719,10 +719,12 @@ describe("ExtensionRunner", () => {
 					});
 				}
 			`;
-			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-1.ts"), extCode1);
-			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-2.ts"), extCode2);
+			const firstPath = path.join(extensionsDir, "before-agent-start-1.ts");
+			const secondPath = path.join(extensionsDir, "before-agent-start-2.ts");
+			fs.writeFileSync(firstPath, extCode1);
+			fs.writeFileSync(secondPath, extCode2);
 
-			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const result = await loadExtensions([firstPath, secondPath], tempDir);
 			expect(result.errors).toEqual([]);
 			expect(result.extensions).toHaveLength(2);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
@@ -945,6 +947,79 @@ describe("ExtensionRunner", () => {
 
 			expect(runner.hasHandlers("tool_call")).toBe(true);
 			expect(runner.hasHandlers("agent_end")).toBe(false);
+		});
+	});
+
+	describe("bash_launch", () => {
+		it("keeps the event immutable, preserves the first operations replacement, and honors a later block", async () => {
+			const first = `
+				export default function(pi) {
+					pi.on("bash_launch", (event) => {
+						if (!Object.isFrozen(event)) return { block: true, reason: "event was mutable" };
+						return { operations: { exec: async () => ({ exitCode: 11 }) } };
+					});
+				}
+			`;
+			const second = `
+				export default function(pi) {
+					pi.on("bash_launch", () => ({ operations: { exec: async () => ({ exitCode: 22 }) } }));
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "a-first.ts"), first);
+			fs.writeFileSync(path.join(extensionsDir, "b-second.ts"), second);
+
+			const loaded = await loadExtensions(
+				[path.join(extensionsDir, "a-first.ts"), path.join(extensionsDir, "b-second.ts")],
+				tempDir,
+			);
+			const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, tempDir, sessionManager, modelRegistry);
+			const selected = await runner.emitBashLaunch(
+				Object.freeze({
+					type: "bash_launch",
+					source: "direct",
+					submittedCommand: "echo ok",
+					command: "echo ok",
+					cwd: tempDir,
+					operationsKind: "local",
+				}),
+			);
+
+			expect(selected && "operations" in selected).toBe(true);
+			if (selected && "operations" in selected) {
+				expect((await selected.operations.exec("", tempDir, { onData: () => {} })).exitCode).toBe(11);
+			}
+
+			fs.writeFileSync(
+				path.join(extensionsDir, "c-block.ts"),
+				`export default function(pi) { pi.on("bash_launch", () => ({ block: true, reason: "blocked later" })); }`,
+			);
+			const blockedLoaded = await loadExtensions(
+				[
+					path.join(extensionsDir, "a-first.ts"),
+					path.join(extensionsDir, "b-second.ts"),
+					path.join(extensionsDir, "c-block.ts"),
+				],
+				tempDir,
+			);
+			const blockedRunner = new ExtensionRunner(
+				blockedLoaded.extensions,
+				blockedLoaded.runtime,
+				tempDir,
+				sessionManager,
+				modelRegistry,
+			);
+			await expect(
+				blockedRunner.emitBashLaunch(
+					Object.freeze({
+						type: "bash_launch",
+						source: "direct",
+						submittedCommand: "echo no",
+						command: "echo no",
+						cwd: tempDir,
+						operationsKind: "local",
+					}),
+				),
+			).resolves.toEqual({ block: true, reason: "blocked later" });
 		});
 	});
 

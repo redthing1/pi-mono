@@ -2624,7 +2624,14 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						launchHook: (event) =>
+							this._extensionRunner.hasHandlers("bash_launch")
+								? this._extensionRunner.emitBashLaunch(event)
+								: undefined,
+					},
 				});
 
 		this._baseToolDefinitions = new Map(
@@ -2833,24 +2840,36 @@ export class AgentSession {
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
 
-		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
-		const prefix = this.settingsManager.getShellCommandPrefix();
-		const shellPath = this.settingsManager.getShellPath();
-		const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
-
 		try {
-			const result = await executeBashWithOperations(
-				resolvedCommand,
-				this.sessionManager.getCwd(),
-				options?.operations ?? createLocalBashOperations({ shellPath }),
-				{
-					onChunk: (delta) => {
-						onChunk?.(delta);
-						this._emit({ type: "bash_execution_update", id: options?.id, delta });
-					},
-					signal: abortController.signal,
+			// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
+			const prefix = this.settingsManager.getShellCommandPrefix();
+			const shellPath = this.settingsManager.getShellPath();
+			const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
+			const operationsKind = options?.operations ? "custom" : "local";
+			const launchResult = this._extensionRunner.hasHandlers("bash_launch")
+				? await this._extensionRunner.emitBashLaunch(
+						Object.freeze({
+							type: "bash_launch",
+							source: "direct",
+							id: options?.id,
+							submittedCommand: command,
+							command: resolvedCommand,
+							cwd: this.sessionManager.getCwd(),
+							operationsKind,
+							shellPath: operationsKind === "local" ? shellPath : undefined,
+						}),
+					)
+				: undefined;
+			if (launchResult && "block" in launchResult) throw new Error(launchResult.reason);
+			const operations = launchResult?.operations ?? options?.operations ?? createLocalBashOperations({ shellPath });
+
+			const result = await executeBashWithOperations(resolvedCommand, this.sessionManager.getCwd(), operations, {
+				onChunk: (delta) => {
+					onChunk?.(delta);
+					this._emit({ type: "bash_execution_update", id: options?.id, delta });
 				},
-			);
+				signal: abortController.signal,
+			});
 
 			this.recordBashResult(command, result, options);
 			return result;
