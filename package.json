@@ -33,7 +33,7 @@
 		"profile:rpc": "bun scripts/profile-coding-agent-node.mjs --mode rpc",
 		"test": "bun run --workspaces --if-present test",
 		"link:local-pi": "bun scripts/link-local-pi.mjs",
-		"install:local-pi": "bun install --frozen-lockfile --ignore-scripts && bun run build:pi && bun run link:local-pi",
+		"install:local-pi": "bun install --frozen-lockfile --ignore-scripts && bun run hydrate:model-data && bun run build:pi && bun run link:local-pi",
 		"version:patch": "bun scripts/bump-version.mjs patch && bun scripts/sync-versions.js && bun install --lockfile-only",
 		"version:minor": "bun scripts/bump-version.mjs minor && bun scripts/sync-versions.js && bun install --lockfile-only",
 		"version:major": "bun scripts/bump-version.mjs major && bun scripts/sync-versions.js && bun install --lockfile-only",
