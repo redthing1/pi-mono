@@ -216,7 +216,7 @@ Submit messages while the agent is working:
 - **Enter** queues a *steering* message, delivered after the current assistant turn finishes executing its tool calls
 - **Alt+Enter** queues a *follow-up* message, delivered only after the agent finishes all work
 - **Escape** aborts and restores queued messages to editor
-- **Alt+Up** retrieves queued messages back to editor
+- **Alt+Up** edits the last queued follow-up message
 
 On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so pi can receive the follow-up shortcut.
 

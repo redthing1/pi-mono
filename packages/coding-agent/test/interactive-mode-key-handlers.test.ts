@@ -26,10 +26,13 @@ type Harness = {
 	editor: Editor;
 	lastSigintTime: number;
 	ui: { requestRender: ReturnType<typeof vi.fn> };
+	session: { dequeueLatestFollowUp: ReturnType<typeof vi.fn> };
+	updatePendingMessagesDisplay: ReturnType<typeof vi.fn>;
 };
 
 const privateMethods = InteractiveMode.prototype as unknown as {
 	handleCtrlC(this: Harness): void;
+	handleDequeue(this: Harness): void;
 };
 
 describe("InteractiveMode key handlers", () => {
@@ -56,5 +59,25 @@ describe("InteractiveMode key handlers", () => {
 		editor.handleInput("\x1b[A");
 
 		expect(editor.getText()).toBe("half written prompt");
+	});
+
+	test("edits only the latest queued follow-up message", () => {
+		const tui = new TuiMainScreen(new FakeTerminal());
+		const editor = new Editor(tui, getEditorTheme());
+		editor.setText("draft");
+		const dequeueLatestFollowUp = vi.fn(() => "second queued message");
+		const updatePendingMessagesDisplay = vi.fn();
+		const harness = Object.create(InteractiveMode.prototype) as Harness;
+		Object.defineProperties(harness, {
+			editor: { value: editor },
+			session: { value: { dequeueLatestFollowUp } },
+			updatePendingMessagesDisplay: { value: updatePendingMessagesDisplay },
+		});
+
+		privateMethods.handleDequeue.call(harness);
+
+		expect(dequeueLatestFollowUp).toHaveBeenCalledOnce();
+		expect(editor.getText()).toBe("second queued message");
+		expect(updatePendingMessagesDisplay).toHaveBeenCalledOnce();
 	});
 });

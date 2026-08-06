@@ -132,7 +132,7 @@ These actions apply when interactive mode is started with `--alt`. Two-finger tr
 | `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
 | `app.message.copy` | `ctrl+x` | Copy the last assistant message, or the selected message in `/tree` |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
-| `app.message.dequeue` | `alt+up` | Restore queued messages to editor |
+| `app.message.dequeue` | `alt+up` | Edit last queued message |
 
 ### Tree Navigation
 

@@ -498,6 +498,34 @@ describe("Agent", () => {
 		expect(agent.state.messages).not.toContainEqual(message);
 	});
 
+	it("removes one exact queued follow-up message", async () => {
+		const agent = new Agent({
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Processed") });
+				});
+				return stream;
+			},
+		});
+		agent.state.messages = [
+			{ role: "user", content: "Initial", timestamp: Date.now() - 10 },
+			createAssistantMessage("Initial response"),
+		];
+		const first = { role: "user" as const, content: "Queued follow-up", timestamp: Date.now() };
+		const second = { role: "user" as const, content: "Queued follow-up", timestamp: Date.now() + 1 };
+		agent.followUp(first);
+		agent.followUp(second);
+
+		expect(agent.removeFollowUpMessage(second)).toBe(true);
+		expect(agent.removeFollowUpMessage(second)).toBe(false);
+
+		await agent.continue();
+
+		expect(agent.state.messages).toContain(first);
+		expect(agent.state.messages).not.toContain(second);
+	});
+
 	it("should handle abort controller", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 

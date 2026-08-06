@@ -110,7 +110,7 @@ export const KEYBINDINGS = {
 	},
 	"app.message.dequeue": {
 		defaultKeys: IS_TMUX_SESSION ? "shift+left" : "alt+up",
-		description: "Restore queued messages",
+		description: "Edit last queued message",
 	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",

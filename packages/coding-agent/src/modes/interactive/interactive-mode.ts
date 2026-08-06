@@ -780,7 +780,7 @@ export class InteractiveMode {
 				rawKeyHint("!", "to run bash"),
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("app.message.followUp", "to queue follow-up"),
-				hint("app.message.dequeue", "to edit all queued messages"),
+				hint("app.message.dequeue", "to edit last queued message"),
 				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
@@ -3793,12 +3793,10 @@ export class InteractiveMode {
 	}
 
 	private handleDequeue(): void {
-		const restored = this.restoreQueuedMessagesToEditor();
-		if (restored === 0) {
-			this.showStatus("No queued messages to restore");
-		} else {
-			this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
-		}
+		const text = this.session.dequeueLatestFollowUp();
+		if (text === undefined) return;
+		this.editor.setText(text);
+		this.updatePendingMessagesDisplay();
 	}
 
 	private updateEditorBorderColor(): void {
@@ -4020,9 +4018,11 @@ export class InteractiveMode {
 				const text = theme.fg("dim", `Follow-up: ${message}`);
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
-			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
-			const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit all queued messages`);
-			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
+			if (followUpMessages.length > 0) {
+				const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
+				const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit last queued message`);
+				this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
+			}
 		}
 	}
 
@@ -5912,7 +5912,7 @@ export class InteractiveMode {
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy last assistant message |
 | \`${followUp}\` | Queue follow-up message |
-| \`${dequeue}\` | Restore queued messages |
+| \`${dequeue}\` | Edit last queued message |
 | \`${pasteImage}\` | Paste image or text from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |

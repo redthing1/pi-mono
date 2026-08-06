@@ -114,6 +114,8 @@ import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
+type QueuedUserMessage = Extract<AgentMessage, { role: "user" }>;
+
 // ============================================================================
 // Skill Block Parsing
 // ============================================================================
@@ -329,7 +331,7 @@ export class AgentSession {
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
-	private _followUpMessages: string[] = [];
+	private _followUpMessages: QueuedUserMessage[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
@@ -601,7 +603,7 @@ export class AgentSession {
 		this._emit({
 			type: "queue_update",
 			steering: [...this._steeringMessages],
-			followUp: [...this._followUpMessages],
+			followUp: this._followUpMessages.map((message) => contentText(message.content, "")),
 		});
 	}
 
@@ -645,14 +647,12 @@ export class AgentSession {
 			this._overflowRecoveryAttempted = false;
 			const messageText = contentText(event.message.content, "");
 			if (messageText) {
-				// Check steering queue first
 				const steeringIndex = this._steeringMessages.indexOf(messageText);
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
 					this._emitQueueUpdate();
 				} else {
-					// Check follow-up queue
-					const followUpIndex = this._followUpMessages.indexOf(messageText);
+					const followUpIndex = this._followUpMessages.indexOf(event.message);
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
 						this._emitQueueUpdate();
@@ -1442,17 +1442,18 @@ export class AgentSession {
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
 	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
-		this._followUpMessages.push(text);
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp({
+		const message = {
 			role: "user",
 			content,
 			timestamp: Date.now(),
-		});
+		} satisfies QueuedUserMessage;
+		this._followUpMessages.push(message);
+		this.agent.followUp(message);
+		this._emitQueueUpdate();
 	}
 
 	/**
@@ -1565,7 +1566,7 @@ export class AgentSession {
 	 */
 	clearQueue(): { steering: string[]; followUp: string[] } {
 		const steering = [...this._steeringMessages];
-		const followUp = [...this._followUpMessages];
+		const followUp = this._followUpMessages.map((message) => contentText(message.content, ""));
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
@@ -1585,7 +1586,18 @@ export class AgentSession {
 
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
-		return this._followUpMessages;
+		return this._followUpMessages.map((message) => contentText(message.content, ""));
+	}
+
+	/** Remove the most recently queued follow-up message and return its text. */
+	dequeueLatestFollowUp(): string | undefined {
+		const message = this._followUpMessages.at(-1);
+		if (!message || !this.agent.removeFollowUpMessage(message)) {
+			return undefined;
+		}
+		this._followUpMessages.pop();
+		this._emitQueueUpdate();
+		return contentText(message.content, "");
 	}
 
 	get resourceLoader(): ResourceLoader {
