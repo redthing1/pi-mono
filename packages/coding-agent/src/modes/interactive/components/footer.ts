@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
@@ -51,6 +51,7 @@ export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private historySearch: { query: string; noMatch: boolean } | undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -63,6 +64,10 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	setHistorySearch(state: { query: string; noMatch: boolean } | undefined): void {
+		this.historySearch = state;
 	}
 
 	/**
@@ -82,6 +87,23 @@ export class FooterComponent implements Component {
 	}
 
 	render(width: number): string[] {
+		if (this.historySearch) {
+			const prompt = theme.fg("dim", "Search  ");
+			const cursor = `${CURSOR_MARKER}\x1b[7m \x1b[0m`;
+			const result = this.historySearch.noMatch ? theme.fg("warning", "  no results") : "";
+			const hints = theme.fg("dim", "enter use · esc cancel");
+			const fixedWidth = visibleWidth(prompt) + visibleWidth(cursor) + visibleWidth(result);
+			const showHints = fixedWidth + visibleWidth(hints) + 2 <= width;
+			const queryWidth = Math.max(0, width - fixedWidth - (showHints ? visibleWidth(hints) + 2 : 0));
+			const query = truncateToWidth(this.historySearch.query, queryWidth, "");
+			const left = prompt + theme.fg("accent", query) + cursor + result;
+			return [
+				left +
+					" ".repeat(Math.max(0, width - visibleWidth(left) - (showHints ? visibleWidth(hints) : 0))) +
+					(showHints ? hints : ""),
+			];
+		}
+
 		const state = this.session.state;
 
 		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)

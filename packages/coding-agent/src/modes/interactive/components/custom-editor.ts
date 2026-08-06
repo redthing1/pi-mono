@@ -33,6 +33,11 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
+		if (this.isHistorySearching()) {
+			super.handleInput(data);
+			return;
+		}
+
 		// Check for clipboard paste keybinding
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();

@@ -505,6 +505,10 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.defaultEditor.onHistorySearchChange = (state) => {
+			this.footer.setHistorySearch(state);
+			this.ui.requestRender();
+		};
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -3551,6 +3555,7 @@ export class InteractiveMode {
 	}
 
 	renderInitialMessages(): void {
+		this.defaultEditor.clearHistory();
 		const entries = this.sessionManager.buildContextEntries();
 		this.renderSessionEntries(entries, {
 			updateFooter: true,
@@ -5897,6 +5902,7 @@ export class InteractiveMode {
 		const yank = this.getEditorKeyDisplay("tui.editor.yank");
 		const yankPop = this.getEditorKeyDisplay("tui.editor.yankPop");
 		const undo = this.getEditorKeyDisplay("tui.editor.undo");
+		const historySearch = this.getEditorKeyDisplay("tui.editor.historySearch");
 		const tab = this.getEditorKeyDisplay("tui.input.tab");
 
 		// App keybindings
@@ -5940,6 +5946,7 @@ export class InteractiveMode {
 | \`${yank}\` | Paste the most-recently-deleted text |
 | \`${yankPop}\` | Cycle through the deleted text after pasting |
 | \`${undo}\` | Undo |
+| \`${historySearch}\` | Search prompt history |
 
 **Other**
 | Key | Action |

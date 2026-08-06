@@ -219,6 +219,12 @@ interface EditorSnapshot {
 	pasteCounter: number;
 }
 
+interface HistorySearchState {
+	draft: EditorSnapshot;
+	query: string;
+	matchIndex: number;
+}
+
 interface LayoutLine {
 	text: string;
 	hasCursor: boolean;
@@ -317,6 +323,7 @@ export class Editor implements Component, Focusable {
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
 	private historyDraft: EditorState | null = null;
+	private historySearch: HistorySearchState | undefined;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -340,6 +347,7 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	public onHistorySearchChange?: (state: { query: string; noMatch: boolean } | undefined) => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -405,6 +413,140 @@ export class Editor implements Component, Focusable {
 		// Limit history size
 		if (this.history.length > 100) {
 			this.history.pop();
+		}
+	}
+
+	/** Clear the in-memory prompt history for the current editor instance. */
+	clearHistory(): void {
+		this.history = [];
+		this.exitHistoryBrowsing();
+		if (this.historySearch) {
+			this.historySearch = undefined;
+			this.emitHistorySearchChange();
+		}
+	}
+
+	/** Whether reverse prompt-history search is currently handling editor input. */
+	isHistorySearching(): boolean {
+		return this.historySearch !== undefined;
+	}
+
+	private historySearchMatches(query: string): string[] {
+		const normalizedQuery = query.toLocaleLowerCase();
+		const seen = new Set<string>();
+		return this.history.filter((entry) => {
+			if (!entry.toLocaleLowerCase().includes(normalizedQuery) || seen.has(entry)) return false;
+			seen.add(entry);
+			return true;
+		});
+	}
+
+	private emitHistorySearchChange(): void {
+		const search = this.historySearch;
+		this.onHistorySearchChange?.(
+			search
+				? {
+						query: search.query,
+						noMatch: search.query.length > 0 && search.matchIndex < 0,
+					}
+				: undefined,
+		);
+	}
+
+	private restoreHistorySearchDraft(search: HistorySearchState): void {
+		this.state = structuredClone(search.draft.state);
+		this.pastes = structuredClone(search.draft.pastes);
+		this.pasteCounter = search.draft.pasteCounter;
+		this.preferredVisualCol = null;
+		this.snappedFromCursorCol = null;
+		this.scrollOffset = 0;
+		if (this.onChange) this.onChange(this.getText());
+	}
+
+	private updateHistorySearch(query: string, advance = false): void {
+		const search = this.historySearch;
+		if (!search) return;
+
+		search.query = query;
+		if (!query) {
+			search.matchIndex = -1;
+			this.restoreHistorySearchDraft(search);
+			this.emitHistorySearchChange();
+			return;
+		}
+
+		const matches = this.historySearchMatches(query);
+		if (matches.length === 0) {
+			search.matchIndex = -1;
+			this.restoreHistorySearchDraft(search);
+			this.emitHistorySearchChange();
+			return;
+		}
+
+		search.matchIndex = advance && search.matchIndex >= 0 ? (search.matchIndex + 1) % matches.length : 0;
+		this.pastes.clear();
+		this.pasteCounter = 0;
+		this.setTextInternal(matches[search.matchIndex]!);
+		this.emitHistorySearchChange();
+	}
+
+	private beginHistorySearch(): void {
+		this.cancelAutocomplete();
+		this.exitHistoryBrowsing();
+		this.lastAction = null;
+		this.historySearch = {
+			draft: structuredClone({ state: this.state, pastes: this.pastes, pasteCounter: this.pasteCounter }),
+			query: "",
+			matchIndex: -1,
+		};
+		this.emitHistorySearchChange();
+	}
+
+	private cancelHistorySearch(): void {
+		const search = this.historySearch;
+		if (!search) return;
+
+		this.historySearch = undefined;
+		this.restoreHistorySearchDraft(search);
+		this.emitHistorySearchChange();
+	}
+
+	private acceptHistorySearch(): void {
+		const search = this.historySearch;
+		if (!search) return;
+
+		if (search.matchIndex >= 0) {
+			this.undoStack.push(search.draft);
+		}
+		this.historySearch = undefined;
+		this.lastAction = null;
+		this.emitHistorySearchChange();
+	}
+
+	private handleHistorySearchInput(data: string, kb: ReturnType<typeof getKeybindings>): void {
+		const search = this.historySearch;
+		if (!search) return;
+
+		if (kb.matches(data, "tui.select.cancel")) {
+			this.cancelHistorySearch();
+			return;
+		}
+		if (kb.matches(data, "tui.input.submit")) {
+			this.acceptHistorySearch();
+			return;
+		}
+		if (kb.matches(data, "tui.editor.historySearch")) {
+			this.updateHistorySearch(search.query, true);
+			return;
+		}
+		if (kb.matches(data, "tui.editor.deleteCharBackward")) {
+			this.updateHistorySearch(search.query.slice(0, -1));
+			return;
+		}
+
+		const printable = decodePrintableKey(data) ?? (data.charCodeAt(0) >= 32 ? data : undefined);
+		if (printable !== undefined) {
+			this.updateHistorySearch(search.query + printable);
 		}
 	}
 
@@ -534,7 +676,7 @@ export class Editor implements Component, Focusable {
 		// Emit hardware cursor marker when focused so TUI can position the
 		// hardware cursor for IME candidate-window placement even while
 		// autocomplete (e.g. slash-command menu) is visible.
-		const emitCursorMarker = this.focused;
+		const emitCursorMarker = this.focused && !this.historySearch;
 
 		for (const layoutLine of visibleLines) {
 			let displayText = layoutLine.text;
@@ -542,7 +684,7 @@ export class Editor implements Component, Focusable {
 			let cursorInPadding = false;
 
 			// Add cursor if this line has it
-			if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
+			if (!this.historySearch && layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
 				const before = displayText.slice(0, layoutLine.cursorPos);
 				const after = displayText.slice(layoutLine.cursorPos);
 
@@ -602,6 +744,14 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		const kb = getKeybindings();
+		if (this.historySearch) {
+			this.handleHistorySearchInput(data, kb);
+			return;
+		}
+		if (kb.matches(data, "tui.editor.historySearch")) {
+			this.beginHistorySearch();
+			return;
+		}
 
 		// Handle character jump mode (awaiting next character to jump to)
 		if (this.jumpMode !== null) {
@@ -1011,6 +1161,10 @@ export class Editor implements Component, Focusable {
 		this.cancelAutocomplete();
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
+		if (this.historySearch) {
+			this.historySearch = undefined;
+			this.emitHistorySearchChange();
+		}
 		const normalized = this.normalizeText(text);
 		// Push undo snapshot if content differs (makes programmatic changes undoable)
 		if (this.getText() !== normalized) {
@@ -1265,6 +1419,10 @@ export class Editor implements Component, Focusable {
 		this.pastes.clear();
 		this.pasteCounter = 0;
 		this.exitHistoryBrowsing();
+		if (this.historySearch) {
+			this.historySearch = undefined;
+			this.emitHistorySearchChange();
+		}
 		this.scrollOffset = 0;
 		this.undoStack.clear();
 		this.lastAction = null;
