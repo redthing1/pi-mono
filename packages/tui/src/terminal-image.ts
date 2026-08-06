@@ -45,11 +45,11 @@ export function setCellDimensions(dims: CellDimensions): void {
 }
 
 /**
- * Checks whether the attached tmux client forwards OSC 8 hyperlinks to the
- * outer terminal. tmux only re-emits them when its `client_termfeatures` lists
- * `hyperlinks`, and strips them otherwise. On any error fallbacks `false`.
+ * Checks whether the attached tmux client advertises a terminal feature. tmux
+ * exposes `Tc` overrides as the standard `RGB` feature. On any error fallbacks
+ * `false`.
  */
-function probeTmuxHyperlinks(): boolean {
+function probeTmuxFeature(feature: string): boolean {
 	try {
 		const termfeatures = execSync("tmux display-message -p '#{client_termfeatures}'", {
 			encoding: "utf8",
@@ -59,13 +59,16 @@ function probeTmuxHyperlinks(): boolean {
 		return termfeatures
 			.split(",")
 			.map((feature) => feature.trim())
-			.includes("hyperlinks");
+			.includes(feature);
 	} catch {
 		return false;
 	}
 }
 
-export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
+export function detectCapabilities(
+	tmuxForwardsHyperlink: () => boolean = () => probeTmuxFeature("hyperlinks"),
+	tmuxSupportsTrueColor: () => boolean = () => probeTmuxFeature("RGB"),
+): TerminalCapabilities {
 	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
 	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
 	const term = process.env.TERM?.toLowerCase() || "";
@@ -75,7 +78,11 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
 	// Image protocols are unreliable under tmux, so leave `images: null`.
 	if (process.env.TMUX || term.startsWith("tmux")) {
-		return { images: null, trueColor: hasTrueColorHint, hyperlinks: tmuxForwardsHyperlink() };
+		return {
+			images: null,
+			trueColor: hasTrueColorHint || tmuxSupportsTrueColor(),
+			hyperlinks: tmuxForwardsHyperlink(),
+		};
 	}
 
 	// screen does not forward OSC 8 hyperlinks, so keep them off there.
