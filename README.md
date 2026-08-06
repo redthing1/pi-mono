@@ -1,99 +1,37 @@
-<p align="center">
-  <a href="https://pi.dev">
-    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
-  </a>
-</p>
-<p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
-</p>
-
 # Pi Agent Harness
 
-This is the home of the Pi agent harness project including our self extensible coding agent.
+This is a private fork of [Pi](https://github.com/badlogic/pi-mono), a minimal, extensible coding-agent harness. The fork stays close to upstream while maintaining stricter dependency, installation, package-loading, and zero-data-retention guarantees.
 
-* **[@earendil-works/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
-* **[@earendil-works/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
-
-To learn more about Pi:
-
-* [Visit pi.dev](https://pi.dev), the project website with demos
-* [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
-
-## All Packages
+## Packages
 
 | Package | Description |
 |---------|-------------|
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
-
-For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
-
-## Permissions & Containerization
-
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
-
-If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
-
-- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
-- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).  Longer term plans for Pi can also be found in [RFCs](https://rfc.earendil.com/keyword/pi/).
+| [@earendil-works/pi-ai](packages/ai) | Unified multi-provider LLM API |
+| [@earendil-works/pi-agent-core](packages/agent) | Agent runtime and tool calling |
+| [@earendil-works/pi-coding-agent](packages/coding-agent) | Interactive coding-agent CLI |
+| [@earendil-works/pi-tui](packages/tui) | Terminal UI library |
 
 ## Development
 
 ```bash
-bun install --frozen-lockfile  # Hydrate the exact committed dependency graph
-bun run install:local-pi       # Build and globally link Pi from this checkout
-bun run build                  # Build all packages
-bun run check                  # Lint, format, and type check
-./test.sh                      # Run tests (skips LLM-dependent tests without API keys)
-./pi-test.sh                   # Run pi from sources (can be run from any directory)
+bun run install:local-pi  # Hydrate, build, and link Pi from a fresh clone
+bun run check             # Lint, format, and type check
+./test.sh                 # Run the test suite
+./pi-test.sh              # Run Pi from source
 ```
 
-> **Note:** `bun run check` requires `bun run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
+`bun run check` requires the packages to be built first.
 
-## Supply-chain hardening
+## Policy and documentation
 
-We treat dependency changes as reviewed code changes.
+- [FORK.md](FORK.md): authoritative fork, upstream-integration, supply-chain, and ZDR policy
+- [SECURITY.md](SECURITY.md): security boundary and vulnerability reporting
+- [AGENTS.md](AGENTS.md): operational rules for development agents
+- [CONTRIBUTING.md](CONTRIBUTING.md): contribution requirements
+- [packages/coding-agent/docs](packages/coding-agent/docs/index.md): user documentation
 
-- Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
-- `bun.lock` is the dependency ground truth and must be updated intentionally.
-- `bun run check` verifies pinned direct deps and native TypeScript import compatibility.
-- `bun run install:local-pi` explicitly hydrates the exact committed lockfile without lifecycle scripts, hydrates generated model data when missing or stale, builds, and globally links this checkout. The link operation does not resolve a registry package.
-- Pi has no runtime installer that retrieves code. Runtime package sources and updates remain local-only.
-- Registry, Git, and URL Pi package sources and automatic self-update are disabled in this fork.
-- Pi packages must be already-present local paths with their runtime code bundled or vendored.
-- Review upstream dependency and installer changes before adopting them.
-
-## Share your OSS coding agent sessions
-
-If you use Pi or other coding agents for open source work, please share your sessions.
-
-Public OSS session data helps improve coding agents with real-world tasks, tool use, failures, and fixes instead of toy benchmarks.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
+Pi runs with the permissions of its process and has no built-in sandbox. See [containerization](packages/coding-agent/docs/containerization.md) when stronger isolation is required.
 
 ## License
 
 MIT
-
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="packages/coding-agent/docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>

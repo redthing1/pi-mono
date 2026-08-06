@@ -1,5 +1,9 @@
 # Development Rules
 
+## Fork Policy
+
+Read and follow [FORK.md](FORK.md) before changing dependencies, builds, installation, updates, package loading, or upstream integration. It is the authoritative fork-specific policy.
+
 ## Conversational Style
 
 - Keep answers short and concise
@@ -33,17 +37,14 @@
 - If you create or modify a test file, you MUST run that test file and iterate until it passes.
 - When writing tests, run them, identify issues in either the test or implementation, and iterate until fixed.
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` plus the faux provider. Do not use real provider APIs, real API keys, or paid tokens.
-- Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` and name them `<issue-number>-<short-slug>.test.ts`.
 - NEVER commit unless user asks
 - For ad-hoc scripts, write them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
 
 ## Dependency and Install Security
 
-- Treat dependency and lockfile changes as reviewed code. Direct external deps stay pinned to exact versions.
-- Hydrate/update locally with `bun install`; clean/CI-style with `bun install --frozen-lockfile`. Don't run lifecycle scripts intentionally unless the user asks.
-- If dependency metadata changes, refresh `bun.lock` with `bun install --lockfile-only`.
-- Registry package installs and automatic self-update are disabled in this fork. Prefer reviewed source, local paths, or git packages pinned to full commit SHAs.
-- Git package dependencies install with Bun using `--ignore-scripts`; review package manifests and dependencies before enabling third-party packages.
+- Follow [FORK.md](FORK.md); do not weaken its supply-chain boundary.
+- Hydrate existing dependencies with `bun install --frozen-lockfile --ignore-scripts`.
+- After an intentional manifest change, refresh `bun.lock` with `bun install --lockfile-only --ignore-scripts` and review the full diff.
 
 ## Git
 
