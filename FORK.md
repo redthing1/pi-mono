@@ -36,6 +36,5 @@ Fresh-clone dependency hydration may download the exact artifacts named by `bun.
 
 - Keep the session in memory; do not persist, resume, import, export, share, or debug it.
 - Send requests only to models explicitly approved with `zdr: true`, including an explicit OpenRouter ZDR route. Never fall back to an unapproved model.
-- Disable provider prompt caching and session affinity for every request.
 
 ZDR approval is an explicit operator assertion, not provider-policy discovery. Verify the provider agreement and route before marking a provider or model as ZDR. `--zdr-client` and `--no-session` provide only local ephemeral sessions and make no remote-retention claim. See [the model configuration guide](packages/coding-agent/docs/models.md#zero-data-retention) for configuration.
