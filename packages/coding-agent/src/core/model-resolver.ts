@@ -39,6 +39,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k2p6",
 	together: "moonshotai/Kimi-K2.6",
+	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
 	"opencode-go": "kimi-k2.6",
 	"kimi-coding": "kimi-for-coding",
@@ -291,12 +292,11 @@ export function resolveCliProvider(options: {
 			};
 }
 
-export async function resolveModelScopeWithDiagnostics(
+export function resolveModelScopeFromModels(
 	patterns: string[],
-	modelRuntime: ModelRuntime,
-	options: { providerScope?: string } = {},
-): Promise<ResolveModelScopeResult> {
-	const availableModels = [...(await modelRuntime.getAvailable(options.providerScope))];
+	models: readonly Model<Api>[],
+): ResolveModelScopeResult {
+	const availableModels = [...models];
 	const scopedModels: ScopedModel[] = [];
 	const diagnostics: ModelScopeDiagnostic[] = [];
 
@@ -372,6 +372,14 @@ export async function resolveModelScopeWithDiagnostics(
 	}
 
 	return { scopedModels, diagnostics };
+}
+
+export async function resolveModelScopeWithDiagnostics(
+	patterns: string[],
+	modelRuntime: ModelRuntime,
+	options: { providerScope?: string } = {},
+): Promise<ResolveModelScopeResult> {
+	return resolveModelScopeFromModels(patterns, await modelRuntime.getAvailable(options.providerScope));
 }
 
 export async function resolveModelScope(
@@ -476,13 +484,42 @@ export function resolveCliModel(options: {
 
 	// If no provider was inferred from the slash, try exact matches without provider inference.
 	// This handles models whose IDs naturally contain slashes (e.g. OpenRouter-style IDs).
+	// Bare exact IDs can exist in multiple providers, so do not choose by catalog order.
+	// Prefer the sole authenticated provider when there is one; otherwise require an
+	// explicit provider to avoid silently selecting an unusable provider.
 	if (!provider) {
 		const lower = cliModel.toLowerCase();
-		const exact = availableModels.find(
+		const exactMatches = availableModels.filter(
 			(m) => m.id.toLowerCase() === lower || `${m.provider}/${m.id}`.toLowerCase() === lower,
 		);
-		if (exact) {
-			return { model: exact, warning: undefined, thinkingLevel: undefined, error: undefined };
+		if (exactMatches.length === 1) {
+			return { model: exactMatches[0], warning: undefined, thinkingLevel: undefined, error: undefined };
+		}
+		if (exactMatches.length > 1) {
+			const authenticatedExactMatches = exactMatches.filter((m) => modelRuntime.hasConfiguredAuth(m.provider));
+			if (authenticatedExactMatches.length === 1) {
+				return {
+					model: authenticatedExactMatches[0],
+					warning: undefined,
+					thinkingLevel: undefined,
+					error: undefined,
+				};
+			}
+
+			const matches = exactMatches
+				.map((m) => `${m.provider}/${m.id}`)
+				.sort((a, b) => a.localeCompare(b))
+				.join(", ");
+			const authHint =
+				authenticatedExactMatches.length === 0
+					? "No matching provider is authenticated."
+					: "More than one matching provider is authenticated.";
+			return {
+				model: undefined,
+				warning: undefined,
+				thinkingLevel: undefined,
+				error: `Model "${cliModel}" is ambiguous across providers: ${matches}. ${authHint} Use --provider or provider/model.`,
+			};
 		}
 	}
 

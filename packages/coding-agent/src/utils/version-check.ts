@@ -6,6 +6,26 @@ export interface LatestPiRelease {
 	note?: string;
 }
 
+/** Include useful errno details hidden behind Node's generic "fetch failed" error. */
+export function formatVersionCheckError(error: unknown): string {
+	const rootMessage = error instanceof Error && error.message ? error.message : String(error);
+	const cause = error instanceof Error ? error.cause : undefined;
+	const causes = cause instanceof AggregateError ? cause.errors : cause === undefined ? [] : [cause];
+	const codes = causes
+		.map((value) =>
+			typeof value === "object" && value !== null && "code" in value && typeof value.code === "string"
+				? value.code
+				: undefined,
+		)
+		.filter((code): code is string => code !== undefined);
+
+	if (codes.length > 0) return `${rootMessage} (${[...new Set(codes)].join(", ")})`;
+	const causeMessage = causes.find(
+		(value): value is Error => value instanceof Error && Boolean(value.message),
+	)?.message;
+	return causeMessage ? `${rootMessage} (cause: ${causeMessage})` : rootMessage;
+}
+
 export function comparePackageVersions(leftVersion: string, rightVersion: string): number | undefined {
 	const left = valid(leftVersion.trim());
 	const right = valid(rightVersion.trim());
@@ -33,7 +53,7 @@ export async function getLatestPiRelease(
 
 export async function getLatestPiVersion(
 	currentVersion: string,
-	options: { timeoutMs?: number } = {},
+	options: { timeoutMs?: number; retry?: boolean } = {},
 ): Promise<string | undefined> {
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }

@@ -106,6 +106,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - Hugging Face
 - Fireworks
 - Together AI
+- Baseten
 - Kimi For Coding
 - MiniMax
 - Xiaomi MiMo
@@ -298,6 +299,8 @@ Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
 - `~/.pi/agent/AGENTS.md` (global)
 - Parent directories (walking up from cwd)
 - Current directory
+
+If a directory contains `AGENTS.override.md`, Pi loads it instead of `AGENTS.md` or `CLAUDE.md` from that directory. Context files from other directories are still concatenated.
 
 Use for project instructions (`AGENTS.md`/`CLAUDE.md`), conventions, common commands. All matching files are concatenated.
 

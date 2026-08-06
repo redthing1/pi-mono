@@ -338,6 +338,7 @@ describe("package commands", () => {
 			authPath: join(agentDir, "auth.json"),
 			modelsPath: join(agentDir, "models.json"),
 			allowModelNetwork: false,
+			signal: expect.any(AbortSignal),
 		});
 		expect(refresh).toHaveBeenCalledWith({
 			allowNetwork: true,

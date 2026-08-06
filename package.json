@@ -4,7 +4,7 @@
 	"type": "module",
 	"workspaces": [
 		"packages/*",
-		"packages/storage/*",
+		"packages/session-backends/*",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
@@ -13,9 +13,9 @@
 	],
 	"scripts": {
 		"clean": "bun run --workspaces --if-present clean",
-		"build": "cd packages/tui && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../storage/sqlite-node && bun run build && cd ../../coding-agent && bun run build && cd ../server && bun run build",
-		"build:pi": "cd packages/tui && bun run build && cd ../ai && bun run build:offline && cd ../agent && bun run build && cd ../coding-agent && bun run build",
-		"build:offline": "cd packages/tui && bun run build && cd ../ai && bun run build:offline && cd ../agent && bun run build && cd ../storage/sqlite-node && bun run build && cd ../../coding-agent && bun run build && cd ../server && bun run build",
+		"build": "cd packages/tui && bun run build && cd ../telemetry && bun run build && cd ../ai && bun run build && cd ../agent && bun run build && cd ../session-backends/sqlite-node && bun run build && cd ../../protocol && bun run build && cd ../client && bun run build && cd ../server && bun run build && cd ../coding-agent && bun run build",
+		"build:pi": "cd packages/tui && bun run build && cd ../telemetry && bun run build && cd ../ai && bun run build:offline && cd ../agent && bun run build && cd ../protocol && bun run build && cd ../client && bun run build && cd ../coding-agent && bun run build",
+		"build:offline": "cd packages/tui && bun run build && cd ../telemetry && bun run build && cd ../ai && bun run build:offline && cd ../agent && bun run build && cd ../session-backends/sqlite-node && bun run build && cd ../../protocol && bun run build && cd ../client && bun run build && cd ../server && bun run build && cd ../coding-agent && bun run build",
 		"check": "biome check --write --error-on-warnings . && bun run check:pinned-deps && bun run check:local-pi-install && bun run check:ts-imports && bun run check:model-data && tsgo --noEmit && bun run check:browser-smoke",
 		"check:browser-smoke": "bun scripts/check-browser-smoke.mjs",
 		"check:declared-deps": "bun scripts/check-declared-deps.mjs",
