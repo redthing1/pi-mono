@@ -31,8 +31,10 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		cleanup(): void;
 	};
 
-	function setupNegotiation(): NegotiationHarness {
+	function setupNegotiation(tmuxExtendedKeysFormat?: string): NegotiationHarness {
 		const terminal = new ProcessTerminal();
+		(terminal as unknown as { tmuxExtendedKeysFormat: string | undefined }).tmuxExtendedKeysFormat =
+			tmuxExtendedKeysFormat;
 		const writes: string[] = [];
 		let input: string | undefined;
 		let dataHandler: ((data: string) => void) | undefined;
@@ -135,6 +137,20 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			assert.equal(harness.getInput(), undefined);
 			assert.equal(harness.terminal.kittyProtocolActive, false);
 			assert.equal(harness.writes.filter((write) => write === "\x1b[>4;2m").length, 1);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("keeps tmux xterm keyboard enhancement instead of enabling modifyOtherKeys", () => {
+		const harness = setupNegotiation("xterm");
+		try {
+			harness.send("\x1b[?1;2;4c");
+
+			assert.equal(harness.getInput(), undefined);
+			assert.equal(harness.terminal.kittyProtocolActive, false);
+			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
+			assert.equal(harness.terminal.modifyOtherKeysActive, false);
 		} finally {
 			harness.cleanup();
 		}

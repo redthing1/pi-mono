@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
@@ -44,6 +45,19 @@ export function isAppleTerminalSession(): boolean {
 export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
 	if (isAppleTerminal && data === "\r" && isShiftPressed) return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE;
 	return data;
+}
+
+function readTmuxExtendedKeysFormat(): string | undefined {
+	if (!process.env.TMUX && !process.env.TMUX_PANE) return undefined;
+	try {
+		return execFileSync("tmux", ["display-message", "-p", "#{extended-keys-format}"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 2000,
+		}).trim();
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -97,6 +111,7 @@ export interface Terminal {
  * Real terminal using process.stdin/stdout
  */
 export class ProcessTerminal implements Terminal {
+	private readonly tmuxExtendedKeysFormat = readTmuxExtendedKeysFormat();
 	private wasRaw = false;
 	private inputHandler?: (data: string) => void;
 	private resizeHandler?: () => void;
@@ -319,6 +334,10 @@ export class ProcessTerminal implements Terminal {
 
 	private enableModifyOtherKeys(): void {
 		if (this._kittyProtocolActive || this._modifyOtherKeysActive) return;
+		// tmux's xterm format already forwards the requested keyboard enhancement
+		// sequences. Enabling modifyOtherKeys here breaks iTerm2 control mode because
+		// it injects C0 bytes through `send-keys 0xNN`, which tmux echoes literally.
+		if (this.tmuxExtendedKeysFormat === "xterm") return;
 		process.stdout.write("\x1b[>4;2m");
 		this._modifyOtherKeysActive = true;
 	}
