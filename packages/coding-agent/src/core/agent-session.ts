@@ -417,6 +417,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this._installAgentCompactionBoundary();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -562,6 +563,27 @@ export class AgentSession {
 				thinkingLevel: this.agent.state.thinkingLevel,
 			};
 		};
+	}
+
+	private _installAgentCompactionBoundary(): void {
+		this.agent.shouldStopAfterTurn = ({ message }) => this._shouldYieldForCompaction(message);
+	}
+
+	private _shouldYieldForCompaction(message: AssistantMessage): boolean {
+		if (message.stopReason === "aborted") {
+			return false;
+		}
+
+		const contextWindow = this.agent.state.model.contextWindow;
+		if (contextWindow <= 0) {
+			return false;
+		}
+
+		return shouldCompact(
+			calculateContextTokens(message.usage),
+			contextWindow,
+			this.settingsManager.getCompactionSettings(),
+		);
 	}
 
 	// =========================================================================
@@ -1127,13 +1149,13 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
+		const shouldHoldQueues = this._shouldYieldForCompaction(msg);
 		if (await this._checkCompaction(msg)) {
 			return true;
 		}
 
-		// The agent loop drains both queues before emitting agent_end. Any messages
-		// here were queued by agent_end extension handlers and need a continuation.
-		return this.agent.hasQueuedMessages();
+		// Resume queued messages unless this run yielded for compaction and compaction did not complete.
+		return !shouldHoldQueues && this.agent.hasQueuedMessages();
 	}
 
 	/**
