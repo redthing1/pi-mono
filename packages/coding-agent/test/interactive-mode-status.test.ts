@@ -393,6 +393,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			fdPath: null;
 			createSkillMentionAutocompleteProvider: (current: AutocompleteProvider) => AutocompleteProvider;
 			filterModelsForProviderScope: (models: TestModel[]) => TestModel[];
+			isModelAllowedByPrivacy: (model: TestModel) => boolean;
 		};
 
 		const createBaseAutocompleteProvider = (
@@ -418,6 +419,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			fdPath: null,
 			createSkillMentionAutocompleteProvider: (current) => current,
 			filterModelsForProviderScope: (availableModels) => availableModels,
+			isModelAllowedByPrivacy: () => true,
 		};
 
 		const provider = createBaseAutocompleteProvider.call(fakeThis);

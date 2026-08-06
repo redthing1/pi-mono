@@ -71,6 +71,16 @@ export class CustomEditor extends Editor {
 			// Fall through to editor handling for delete-char-forward when not empty
 		}
 
+		// Explicit history bindings take precedence over app actions while the editor is focused.
+		// This lets users bind Ctrl+P even though it cycles models by default.
+		if (
+			this.keybindings.matches(data, "tui.editor.historyPrevious") ||
+			this.keybindings.matches(data, "tui.editor.historyNext")
+		) {
+			super.handleInput(data);
+			return;
+		}
+
 		const followUpHandler = this.actionHandlers.get("app.message.followUp");
 		if (followUpHandler && this.keybindings.matches(data, "app.message.followUp")) {
 			if (!this.isShowingAutocomplete()) {

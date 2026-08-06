@@ -802,9 +802,14 @@ export async function main(args: string[], options?: MainOptions) {
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		let scopedModels =
 			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScope(modelPatterns, modelRuntime, { providerScope })
+				? await resolveModelScope(modelPatterns, modelRuntime, {
+						providerScope,
+						signal: AbortSignal.timeout(15_000),
+					})
 				: providerScope
-					? (await modelRuntime.getAvailable(providerScope)).map((model) => ({ model }))
+					? (await modelRuntime.getAvailable(providerScope, { signal: AbortSignal.timeout(15_000) })).map(
+							(model) => ({ model }),
+						)
 					: [];
 		if (privacy.remoteZdr) {
 			scopedModels = scopedModels.filter((scoped) => modelRuntime.isZdrModel(scoped.model));

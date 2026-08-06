@@ -6,6 +6,7 @@ This is a private fork of [Pi](https://github.com/badlogic/pi-mono), a minimal, 
 
 | Package | Description |
 |---------|-------------|
+| [@earendil-works/pi-telemetry](packages/telemetry) | Vendor-neutral telemetry contracts and typed schema utilities |
 | [@earendil-works/pi-ai](packages/ai) | Unified multi-provider LLM API |
 | [@earendil-works/pi-agent-core](packages/agent) | Agent runtime and tool calling |
 | [@earendil-works/pi-coding-agent](packages/coding-agent) | Interactive coding-agent CLI |

@@ -3,7 +3,13 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, type KnownProvider, type Model, modelsAreEqual } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	type AuthOperationOptions,
+	type KnownProvider,
+	type Model,
+	modelsAreEqual,
+} from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
@@ -377,15 +383,16 @@ export function resolveModelScopeFromModels(
 export async function resolveModelScopeWithDiagnostics(
 	patterns: string[],
 	modelRuntime: ModelRuntime,
-	options: { providerScope?: string } = {},
+	options: { providerScope?: string } & AuthOperationOptions = {},
 ): Promise<ResolveModelScopeResult> {
-	return resolveModelScopeFromModels(patterns, await modelRuntime.getAvailable(options.providerScope));
+	const { providerScope, ...authOptions } = options;
+	return resolveModelScopeFromModels(patterns, await modelRuntime.getAvailable(providerScope, authOptions));
 }
 
 export async function resolveModelScope(
 	patterns: string[],
 	modelRuntime: ModelRuntime,
-	options: { providerScope?: string } = {},
+	options: { providerScope?: string } & AuthOperationOptions = {},
 ): Promise<ScopedModel[]> {
 	const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(patterns, modelRuntime, options);
 	for (const diagnostic of diagnostics) {
@@ -713,8 +720,8 @@ export async function findInitialModel(options: {
 	}
 
 	// 4. Try first available model with valid API key
-	const availableModels = [...(await modelRuntime.getAvailable(providerScope))].filter(
-		(model) => !modelFilter || modelFilter(model),
+	const availableModels = [...modelRuntime.getAvailableSnapshot()].filter(
+		(model) => (!providerScope || model.provider === providerScope) && (!modelFilter || modelFilter(model)),
 	);
 
 	if (availableModels.length > 0) {
@@ -785,7 +792,9 @@ export async function restoreModelFromSession(
 	}
 
 	// Try to find any available model
-	const availableModels = [...(await modelRuntime.getAvailable(providerScope))];
+	const availableModels = [...modelRuntime.getAvailableSnapshot()].filter(
+		(model) => !providerScope || model.provider === providerScope,
+	);
 
 	if (availableModels.length > 0) {
 		// Try to find a default model from known providers
