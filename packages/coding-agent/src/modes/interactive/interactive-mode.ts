@@ -167,6 +167,7 @@ import {
 	theme,
 } from "./theme/theme.ts";
 import { InteractiveThemeController } from "./theme/theme-controller.ts";
+import { ToolExecutionPresenter } from "./tool-execution-presenter.ts";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -423,8 +424,8 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
-	// Tool execution tracking: toolCallId -> component
-	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private toolExecutionPresenter: ToolExecutionPresenter;
+	private compactExplorationRebuildPending = false;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -532,6 +533,27 @@ export class InteractiveMode {
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
+		this.toolExecutionPresenter = new ToolExecutionPresenter(this.chatContainer, {
+			createComponent: (toolName, toolCallId, args, argsComplete) => {
+				const component = new ToolExecutionComponent(
+					toolName,
+					toolCallId,
+					args,
+					{
+						showImages: this.settingsManager.getShowImages(),
+						imageWidthCells: this.settingsManager.getImageWidthCells(),
+						argsComplete,
+					},
+					this.getRegisteredToolDefinition(toolName),
+					this.ui,
+					this.sessionManager.getCwd(),
+				);
+				component.setExpanded(this.toolOutputExpanded);
+				return component;
+			},
+			toolsExpanded: () => this.toolOutputExpanded,
+			compactExploration: this.settingsManager.getCompactExploration(),
+		});
 		this.documentContainer = new Container();
 		this.documentContainer.addChild(this.headerContainer);
 		this.documentContainer.addChild(this.loadedResourcesContainer);
@@ -1999,7 +2021,7 @@ export class InteractiveMode {
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
-		this.pendingTools.clear();
+		this.toolExecutionPresenter.reset();
 		this.renderInitialMessages();
 	}
 
@@ -3096,7 +3118,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
-				this.pendingTools.clear();
+				this.toolExecutionPresenter.reset();
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
@@ -3174,28 +3196,7 @@ export class InteractiveMode {
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
-							if (!this.pendingTools.has(content.id)) {
-								const component = new ToolExecutionComponent(
-									content.name,
-									content.id,
-									content.arguments,
-									{
-										showImages: this.settingsManager.getShowImages(),
-										imageWidthCells: this.settingsManager.getImageWidthCells(),
-									},
-									this.getRegisteredToolDefinition(content.name),
-									this.ui,
-									this.sessionManager.getCwd(),
-								);
-								component.setExpanded(this.toolOutputExpanded);
-								this.chatContainer.addChild(component);
-								this.pendingTools.set(content.id, component);
-							} else {
-								const component = this.pendingTools.get(content.id);
-								if (component) {
-									component.updateArgs(content.arguments);
-								}
-							}
+							this.toolExecutionPresenter.track(content.name, content.id, content.arguments);
 						}
 					}
 					this.ui.requestRender();
@@ -3221,18 +3222,10 @@ export class InteractiveMode {
 						if (!errorMessage) {
 							errorMessage = this.streamingMessage.errorMessage || "Error";
 						}
-						for (const [, component] of this.pendingTools.entries()) {
-							component.updateResult({
-								content: [{ type: "text", text: errorMessage }],
-								isError: true,
-							});
-						}
-						this.pendingTools.clear();
+						this.toolExecutionPresenter.failPending(errorMessage);
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
-						for (const [, component] of this.pendingTools.entries()) {
-							component.setArgsComplete();
-						}
+						this.toolExecutionPresenter.completePendingArguments();
 						this.maybeShowCacheMissNotice(this.streamingMessage);
 					}
 					this.streamingComponent = undefined;
@@ -3247,45 +3240,20 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
-				let component = this.pendingTools.get(event.toolCallId);
-				if (!component) {
-					component = new ToolExecutionComponent(
-						event.toolName,
-						event.toolCallId,
-						event.args,
-						{
-							showImages: this.settingsManager.getShowImages(),
-							imageWidthCells: this.settingsManager.getImageWidthCells(),
-						},
-						this.getRegisteredToolDefinition(event.toolName),
-						this.ui,
-						this.sessionManager.getCwd(),
-					);
-					component.setExpanded(this.toolOutputExpanded);
-					this.chatContainer.addChild(component);
-					this.pendingTools.set(event.toolCallId, component);
-				}
-				component.markExecutionStarted();
+				this.toolExecutionPresenter.start(event.toolName, event.toolCallId, event.args);
 				this.ui.requestRender();
 				break;
 			}
 
 			case "tool_execution_update": {
-				const component = this.pendingTools.get(event.toolCallId);
-				if (component) {
-					component.updateResult({ ...event.partialResult, isError: false }, true);
-					this.ui.requestRender();
-				}
+				this.toolExecutionPresenter.update(event.toolCallId, { ...event.partialResult, isError: false }, true);
+				this.ui.requestRender();
 				break;
 			}
 
 			case "tool_execution_end": {
-				const component = this.pendingTools.get(event.toolCallId);
-				if (component) {
-					component.updateResult({ ...event.result, isError: event.isError });
-					this.pendingTools.delete(event.toolCallId);
-					this.ui.requestRender();
-				}
+				this.toolExecutionPresenter.finish(event.toolCallId, { ...event.result, isError: event.isError });
+				this.ui.requestRender();
 				break;
 			}
 
@@ -3299,7 +3267,10 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
-				this.pendingTools.clear();
+				this.toolExecutionPresenter.reset();
+				if (this.compactExplorationRebuildPending) {
+					this.rebuildChatFromMessages();
+				}
 
 				this.ui.requestRender();
 				break;
@@ -3475,10 +3446,16 @@ export class InteractiveMode {
 		this.chatContainer.addChild(component);
 	}
 
+	private createBashExecutionComponent(command: string, excludeFromContext = false): BashExecutionComponent {
+		return new BashExecutionComponent(command, this.ui, excludeFromContext, {
+			compactExploration: this.settingsManager.getCompactExploration(),
+		});
+	}
+
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
 		switch (message.role) {
 			case "bashExecution": {
-				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
+				const component = this.createBashExecutionComponent(message.command, message.excludeFromContext);
 				if (message.output) {
 					component.appendOutput(message.output);
 				}
@@ -3586,8 +3563,9 @@ export class InteractiveMode {
 		items: readonly RenderSessionItem[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
-		this.pendingTools.clear();
-		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
+		this.toolExecutionPresenter.setCompactExploration(this.settingsManager.getCompactExploration());
+		this.toolExecutionPresenter.reset();
+		this.compactExplorationRebuildPending = false;
 		// Cache-miss notices are not persisted; re-derive them from the full entry
 		// list and re-inject them after the assistant messages that paid for them.
 		const cacheMisses = this.settingsManager.getShowCacheMissNotices()
@@ -3612,20 +3590,7 @@ export class InteractiveMode {
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.id,
-							content.arguments,
-							{
-								showImages: this.settingsManager.getShowImages(),
-								imageWidthCells: this.settingsManager.getImageWidthCells(),
-							},
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-							this.sessionManager.getCwd(),
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+						this.toolExecutionPresenter.track(content.name, content.id, content.arguments, true);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
@@ -3638,9 +3603,10 @@ export class InteractiveMode {
 							} else {
 								errorMessage = message.errorMessage || "Error";
 							}
-							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
-						} else {
-							renderedPendingTools.set(content.id, component);
+							this.toolExecutionPresenter.finish(content.id, {
+								content: [{ type: "text", text: errorMessage }],
+								isError: true,
+							});
 						}
 					}
 				}
@@ -3650,20 +3616,13 @@ export class InteractiveMode {
 				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
-				const component = renderedPendingTools.get(message.toolCallId);
-				if (component) {
-					component.updateResult(message);
-					renderedPendingTools.delete(message.toolCallId);
-				}
+				this.toolExecutionPresenter.finish(message.toolCallId, message);
 			} else {
 				// All other messages use standard rendering
 				this.addMessageToChat(message, options);
 			}
 		}
 
-		for (const [toolCallId, component] of renderedPendingTools) {
-			this.pendingTools.set(toolCallId, component);
-		}
 		this.ui.requestRender();
 	}
 
@@ -4451,19 +4410,11 @@ export class InteractiveMode {
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof ToolExecutionComponent) {
-								child.setShowImages(enabled);
-							}
-						}
+						this.toolExecutionPresenter.setShowImages(enabled);
 					},
 					onImageWidthCellsChange: (width) => {
 						this.settingsManager.setImageWidthCells(width);
-						for (const child of this.chatContainer.children) {
-							if (child instanceof ToolExecutionComponent) {
-								child.setImageWidthCells(width);
-							}
-						}
+						this.toolExecutionPresenter.setImageWidthCells(width);
 					},
 					onAutoResizeImagesChange: (enabled) => {
 						this.settingsManager.setImageAutoResize(enabled);
@@ -4603,6 +4554,14 @@ export class InteractiveMode {
 					},
 					onCompactExplorationChange: (enabled) => {
 						this.settingsManager.setCompactExploration(enabled);
+						for (const child of [...this.chatContainer.children, ...this.pendingMessagesContainer.children]) {
+							if (child instanceof BashExecutionComponent) child.setCompactExploration(enabled);
+						}
+						if (this.session.isStreaming || this.session.isBashRunning) {
+							this.compactExplorationRebuildPending = true;
+						} else {
+							this.rebuildChatFromMessages();
+						}
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
@@ -6381,7 +6340,7 @@ export class InteractiveMode {
 			const result = eventResult.result;
 
 			// Create UI component for display
-			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+			this.bashComponent = this.createBashExecutionComponent(command, excludeFromContext);
 			if (this.session.isStreaming) {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
@@ -6403,13 +6362,17 @@ export class InteractiveMode {
 			// Record the result in session
 			this.session.recordBashResult(command, result, { excludeFromContext });
 			this.bashComponent = undefined;
+			if (this.compactExplorationRebuildPending && !this.session.isStreaming) {
+				this.rebuildChatFromMessages();
+			}
 			this.ui.requestRender();
 			return;
 		}
 
 		// Normal execution path (possibly with custom operations)
 		const isDeferred = this.session.isStreaming;
-		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+		let resultRecorded = false;
+		this.bashComponent = this.createBashExecutionComponent(command, excludeFromContext);
 
 		if (isDeferred) {
 			// Show in pending area when agent is streaming
@@ -6441,6 +6404,7 @@ export class InteractiveMode {
 					result.fullOutputPath,
 				);
 			}
+			resultRecorded = true;
 		} catch (error) {
 			if (this.bashComponent) {
 				this.bashComponent.setComplete(undefined, false);
@@ -6449,6 +6413,9 @@ export class InteractiveMode {
 		}
 
 		this.bashComponent = undefined;
+		if (resultRecorded && this.compactExplorationRebuildPending && !this.session.isStreaming) {
+			this.rebuildChatFromMessages();
+		}
 		this.ui.requestRender();
 	}
 
