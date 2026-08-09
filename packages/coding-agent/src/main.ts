@@ -798,6 +798,25 @@ export async function main(args: string[], options?: MainOptions) {
 				providerScope = resolvedProviderScope.provider;
 			}
 		}
+		if (providerScope && !parsed.help && parsed.listModels === undefined) {
+			const refreshResult = await modelRuntime.refresh({
+				providers: [providerScope],
+				force: true,
+				signal: AbortSignal.timeout(15_000),
+			});
+			const refreshError = refreshResult.errors.get(providerScope);
+			if (refreshError) {
+				diagnostics.push({
+					type: "error",
+					message: `Provider "${providerScope}" is unavailable: ${refreshError.message}`,
+				});
+			} else if (refreshResult.aborted) {
+				diagnostics.push({
+					type: "error",
+					message: `Timed out waiting for provider "${providerScope}".`,
+				});
+			}
+		}
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		let scopedModels =

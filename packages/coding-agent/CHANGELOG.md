@@ -119,6 +119,7 @@
 
 ### Fixed
 
+- Fixed explicitly provider-scoped startup waiting on unrelated dynamic providers instead of refreshing only the selected provider.
 - Fixed the footer showing `(sub)` for generic OAuth/OpenID sign-ins without a known subscription; extension OAuth providers can opt in with `isSubscription`.
 - Fixed path-containing `find` globs returning no results on Windows ([#6817](https://github.com/earendil-works/pi/issues/6817)).
 - Fixed messages queued during manual `/compact` failing instead of being sent after compaction completes.
