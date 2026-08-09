@@ -124,7 +124,7 @@ describe("edit tool TUI rendering", () => {
 			"line 50 changed",
 			() => tui.requestRender(true),
 		);
-		expect(callOnlyRender).toContain("edit");
+		expect(callOnlyRender).toContain("Editing");
 		expect(callOnlyRender).toContain("line 950 changed");
 
 		const redrawsBeforeResult = tui.fullRedraws;
@@ -144,12 +144,13 @@ describe("edit tool TUI rendering", () => {
 		expect(terminal.fullClearCount).toBe(clearsBeforeResult);
 
 		const settledRender = component.render(80).join("\n");
+		expect(settledRender).toContain("Edited");
 		expect(settledRender).toContain("line 50 changed");
 		expect(settledRender).toContain("line 950 changed");
 		expect(settledRender).not.toContain("Successfully replaced");
 	});
 
-	it("reconstructs the boxed preview from a settled result without argsComplete", async () => {
+	it("reconstructs the preview from a settled result without argsComplete", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "pi-edit-replay-"));
 		tempDirs.push(dir);
 		const filePath = join(dir, "replay-edit.txt");
@@ -194,6 +195,7 @@ describe("edit tool TUI rendering", () => {
 		await waitForRender();
 
 		const rendered = component.render(80).join("\n");
+		expect(rendered).toContain("Edited");
 		expect(rendered).toContain("line 50 changed");
 		expect(rendered).toContain("line 150 changed");
 	});
@@ -218,6 +220,9 @@ describe("edit tool TUI rendering", () => {
 		tui.addChild(component);
 		tui.start();
 		await waitForRender();
+		await waitForRender();
+
+		expect(component.render(80).join("\n")).not.toContain("Could not find");
 
 		component.setArgsComplete();
 		tui.requestRender();
@@ -229,7 +234,89 @@ describe("edit tool TUI rendering", () => {
 			"Could not find",
 			() => tui.requestRender(true),
 		);
+		expect(rendered).toContain("Editing");
 		expect(rendered).not.toContain("+1 ");
 		expect(rendered).not.toContain("-1 ");
+	});
+
+	it("keeps the last valid preview visible while newer arguments are incomplete", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-edit-stable-preview-"));
+		tempDirs.push(dir);
+		const filePath = join(dir, "stable-preview.txt");
+		await writeFile(filePath, "alpha\nbeta\ngamma\n", "utf8");
+
+		const terminal = new FakeTerminal();
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-call-stable-preview",
+			{ path: filePath, edits: [{ oldText: "beta", newText: "beta changed" }] },
+			{},
+			createEditToolDefinition(process.cwd()),
+			tui,
+			process.cwd(),
+		);
+		tui.addChild(component);
+		tui.start();
+
+		await waitForRenderedText(
+			() => component.render(80).join("\n"),
+			"beta changed",
+			() => tui.requestRender(true),
+		);
+
+		component.updateArgs({ path: filePath, edits: [{ oldText: "beta", newText: "beta" }] });
+		const duringUpdate = component.render(80).join("\n");
+		expect(duringUpdate).toContain("beta changed");
+		expect(duringUpdate).not.toContain("No changes made");
+
+		await waitForRender();
+		component.setArgsComplete();
+		const completedUpdate = await waitForRenderedText(
+			() => component.render(80).join("\n"),
+			"No changes made",
+			() => tui.requestRender(true),
+		);
+		expect(completedUpdate).not.toContain("beta changed");
+	});
+
+	it("keeps the attempted diff visible when execution fails", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-edit-failed-execution-"));
+		tempDirs.push(dir);
+		const filePath = join(dir, "failed-execution.txt");
+		await writeFile(filePath, "before\n", "utf8");
+
+		const terminal = new FakeTerminal();
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new ToolExecutionComponent(
+			"edit",
+			"tool-call-failed-execution",
+			{ path: filePath, edits: [{ oldText: "before", newText: "after" }] },
+			{},
+			createEditToolDefinition(process.cwd()),
+			tui,
+			process.cwd(),
+		);
+		tui.addChild(component);
+		tui.start();
+
+		await waitForRenderedText(
+			() => component.render(80).join("\n"),
+			"after",
+			() => tui.requestRender(true),
+		);
+
+		component.updateResult(
+			{
+				content: [{ type: "text", text: "The file changed before the edit could be written." }],
+				isError: true,
+			},
+			false,
+		);
+		const rendered = component.render(80).join("\n");
+		expect(rendered).toContain("Failed to edit");
+		expect(rendered).toContain("before");
+		expect(rendered).toContain("after");
+		expect(rendered).toContain("The file changed before the edit could be written.");
 	});
 });
