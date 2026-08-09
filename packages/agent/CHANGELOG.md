@@ -10,6 +10,7 @@
 
 ### Added
 
+- Added optional presentation labels to compaction summary messages.
 - Added a bounded `beforeInference` hook for inspecting exact transformed requests and accepting one raw-context replacement before authentication and provider dispatch.
 - Added typed AI-request and harness telemetry schemas, callback helpers, and a generated schema reference.
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.

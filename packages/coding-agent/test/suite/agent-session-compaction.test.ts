@@ -1,6 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
+	type Context,
+	contentText,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
@@ -315,6 +317,145 @@ describe("AgentSession compaction characterization", () => {
 		expect(compactionEnd?.result?.estimatedTokensAfter).toBeGreaterThan(0);
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.session.getLastAssistantText()).toBe("continued after checkpoint");
+	});
+
+	it("passes the exact threshold inference context to the summary handler", async () => {
+		let triggerContext: Readonly<Context> | undefined;
+		let sourceContext: Readonly<Context> | undefined;
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_compaction_check", (event) => {
+						triggerContext = event.context;
+						return { action: "compact" };
+					});
+					pi.on("session_before_compact", (event) => {
+						sourceContext = event.sourceContext;
+						return {
+							compaction: {
+								summary: "exact source checkpoint",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.setResponses([fauxAssistantMessage("continued")]);
+
+		await harness.session.prompt("pending request");
+
+		expect(sourceContext).toEqual(triggerContext);
+		expect(Object.isFrozen(sourceContext)).toBe(true);
+		expect(Object.isFrozen(sourceContext?.messages)).toBe(true);
+	});
+
+	it("lets an extension checkpoint a single oversized pending turn without retaining it", async () => {
+		let preparedAnchor: string | null | undefined;
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_compaction_check", () => ({ action: "compact" }));
+					pi.on("session_before_compact", (event) => {
+						preparedAnchor = event.preparation.firstKeptEntryId;
+						return {
+							compaction: {
+								summary: "oversized request checkpoint",
+								firstKeptEntryId: null,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("continued from checkpoint")]);
+
+		await harness.session.prompt("x".repeat(5000));
+
+		expect(preparedAnchor).toBeNull();
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(harness.session.getLastAssistantText()).toBe("continued from checkpoint");
+	});
+
+	it("prepares manual source context through the normal context transform", async () => {
+		let sourceContext: Readonly<Context> | undefined;
+		const marker = "manual transformed marker";
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("context", (event) => ({
+						messages: [
+							...event.messages,
+							{ role: "custom", customType: "marker", content: marker, display: false, timestamp: 1 },
+						],
+					}));
+					pi.on("session_before_compact", (event) => {
+						sourceContext = event.sourceContext;
+						return {
+							compaction: {
+								summary: "manual checkpoint",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+
+		await harness.session.compact();
+
+		expect(
+			sourceContext?.messages.some((message) => message.role === "user" && contentText(message.content) === marker),
+		).toBe(true);
+	});
+
+	it("uses the last dispatched durable prefix as overflow checkpoint source", async () => {
+		let sourceContext: Readonly<Context> | undefined;
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						if (event.reason === "overflow") sourceContext = event.sourceContext;
+						return {
+							compaction: {
+								summary: "overflow checkpoint",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("partial response", { stopReason: "length" }),
+			fauxAssistantMessage("completed response"),
+		]);
+
+		await harness.session.prompt("x".repeat(5000));
+
+		expect(sourceContext?.messages.some((message) => message.role === "user")).toBe(true);
+		expect(
+			sourceContext?.messages.some(
+				(message) =>
+					message.role === "assistant" &&
+					message.content.some((block) => block.type === "text" && block.text === "partial response"),
+			),
+		).toBe(false);
 	});
 
 	it("does not persist a candidate when replacement transformation fails", async () => {
@@ -774,7 +915,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
 
-	it("uses the latest valid usage for default boundary admission", async () => {
+	it("uses the latest valid usage for the default boundary decision", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 200_000 }],
 			settings: { compaction: { keepRecentTokens: 1 } },
@@ -782,7 +923,7 @@ describe("AgentSession compaction characterization", () => {
 				(pi) => {
 					pi.on("session_before_compact", (event) => ({
 						compaction: {
-							summary: "default admission checkpoint",
+							summary: "default boundary checkpoint",
 							firstKeptEntryId: event.preparation.firstKeptEntryId,
 							tokensBefore: event.preparation.tokensBefore,
 						},

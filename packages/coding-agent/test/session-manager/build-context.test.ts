@@ -4,6 +4,7 @@ import {
 	buildContextEntries,
 	buildSessionContext,
 	type CompactionEntry,
+	type CompactionPlacement,
 	type CustomEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
@@ -43,6 +44,7 @@ function compaction(
 	parentId: string | null,
 	summary: string,
 	firstKeptEntryId: string | null,
+	placement?: CompactionPlacement,
 ): CompactionEntry {
 	return {
 		type: "compaction",
@@ -51,6 +53,7 @@ function compaction(
 		timestamp: "2025-01-01T00:00:00Z",
 		summary,
 		firstKeptEntryId,
+		placement,
 		tokensBefore: 1000,
 	};
 }
@@ -174,6 +177,25 @@ describe("buildSessionContext", () => {
 			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["2", "3"]);
 			const ctx = buildSessionContext(entries);
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "assistant"]);
+		});
+
+		it("places an after-retained checkpoint after the retained turn", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				msg("2", "1", "assistant", "response1"),
+				msg("3", "2", "user", "retained request"),
+				msg("4", "3", "assistant", "retained response"),
+				compaction("5", "4", "Checkpoint", "3", "after-retained"),
+				msg("6", "5", "user", "continued request"),
+			];
+
+			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["3", "4", "5", "6"]);
+			expect(buildSessionContext(entries).messages.map((message) => message.role)).toEqual([
+				"user",
+				"assistant",
+				"compactionSummary",
+				"user",
+			]);
 		});
 
 		it("multiple compactions uses latest", () => {

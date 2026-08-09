@@ -605,7 +605,7 @@ export interface SessionBeforeForkEvent {
 	position: "before" | "at";
 }
 
-/** Fired before automatic compaction admission at an inference boundary. */
+/** Fired before the automatic compaction decision at an inference boundary. */
 export interface SessionCompactionCheckEvent {
 	readonly type: "session_compaction_check";
 	/** Defensive snapshot of the exact provider-neutral context prepared for this inference. */
@@ -619,6 +619,8 @@ export interface SessionCompactionCheckEvent {
 /** Fired before context compaction (can be cancelled or customized) */
 export interface SessionBeforeCompactEvent {
 	type: "session_before_compact";
+	/** Exact provider-neutral context prepared at this compaction boundary for custom summary generation. */
+	readonly sourceContext: Readonly<Context>;
 	preparation: CompactionPreparation;
 	branchEntries: SessionEntry[];
 	customInstructions?: string;

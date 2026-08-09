@@ -48,6 +48,7 @@ export interface CompactionSummaryMessage {
 	role: "compactionSummary";
 	summary: string;
 	tokensBefore: number;
+	label?: string;
 	timestamp: number;
 }
 
@@ -95,11 +96,13 @@ export function createCompactionSummaryMessage(
 	summary: string,
 	tokensBefore: number,
 	timestamp: string | number,
+	label?: string,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
 		summary,
 		tokensBefore,
+		label,
 		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
 }

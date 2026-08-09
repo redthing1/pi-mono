@@ -30,6 +30,7 @@ import { contentText, estimateContextTokens as estimatePreparedContextTokens } f
 import type {
 	AssistantMessage,
 	AuthResult,
+	Context,
 	ImageContent,
 	Model,
 	ProviderHeaders,
@@ -323,6 +324,18 @@ interface PendingInferenceCompaction {
 	abortListener?: () => void;
 }
 
+function snapshotContext(context: Readonly<Context>): Context {
+	const messages = context.messages.slice();
+	const tools = context.tools?.slice();
+	Object.freeze(messages);
+	if (tools) Object.freeze(tools);
+	return Object.freeze({
+		systemPrompt: context.systemPrompt,
+		messages,
+		...(tools ? { tools } : {}),
+	});
+}
+
 function estimateMessagesTokens(messages: AgentMessage[]): number {
 	let tokens = 0;
 	for (const message of messages) {
@@ -392,6 +405,7 @@ export class AgentSession {
 	private _pendingInferenceCompaction: PendingInferenceCompaction | undefined = undefined;
 	private _fatalSessionError: string | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	private _lastDispatchedContext: Readonly<Context> | undefined = undefined;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -660,7 +674,7 @@ export class AgentSession {
 
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled || inference.model.contextWindow <= 0) {
-			return { action: "send" };
+			return this._sendInference(inference);
 		}
 
 		let extensionDecision: SessionCompactionCheckResult | undefined;
@@ -675,17 +689,34 @@ export class AgentSession {
 		}
 
 		if (extensionDecision?.action === "send") {
-			return { action: "send" };
+			return this._sendInference(inference);
 		}
 
-		if (!extensionDecision && !this._defaultCompactionAdmission(inference)) {
-			return { action: "send" };
+		if (!extensionDecision && !this._shouldUseDefaultCompaction(inference)) {
+			return this._sendInference(inference);
 		}
 
-		return await this._stageInferenceCompaction(inference, signal);
+		return await this._stageInferenceCompaction(inference, signal, extensionDecision?.action === "compact");
 	}
 
-	private _defaultCompactionAdmission(inference: BeforeInferenceContext): boolean {
+	private _sendInference(inference: BeforeInferenceContext): BeforeInferenceResult {
+		this._lastDispatchedContext = inference.llmContext;
+		return { action: "send" };
+	}
+
+	private async _prepareCurrentSourceContext(signal?: AbortSignal): Promise<Context> {
+		let messages = this.agent.state.messages.slice();
+		if (this.agent.transformContext) {
+			messages = await this.agent.transformContext(messages, signal);
+		}
+		return {
+			systemPrompt: this.agent.state.systemPrompt,
+			messages: await this.agent.convertToLlm(messages),
+			tools: this.agent.state.tools,
+		};
+	}
+
+	private _shouldUseDefaultCompaction(inference: BeforeInferenceContext): boolean {
 		return shouldCompact(
 			estimatePreparedContextTokens(inference.llmContext).tokens,
 			inference.model.contextWindow,
@@ -696,11 +727,16 @@ export class AgentSession {
 	private async _stageInferenceCompaction(
 		inference: BeforeInferenceContext,
 		signal?: AbortSignal,
+		allowEmptyRetainedContext = false,
 	): Promise<BeforeInferenceResult> {
 		const pathEntries = this.sessionManager.getBranch();
-		const preparation = prepareCompaction(pathEntries, this.settingsManager.getCompactionSettings());
+		const preparation = prepareCompaction(
+			pathEntries,
+			this.settingsManager.getCompactionSettings(),
+			allowEmptyRetainedContext,
+		);
 		if (!preparation) {
-			return { action: "send" };
+			return this._sendInference(inference);
 		}
 
 		this._emit({ type: "compaction_start", reason: "threshold" });
@@ -730,6 +766,7 @@ export class AgentSession {
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
 				const extensionResult = (await this._extensionRunner.emit({
 					type: "session_before_compact",
+					sourceContext: snapshotContext(inference.llmContext),
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions: undefined,
@@ -779,6 +816,7 @@ export class AgentSession {
 				compactionResult.details,
 				fromExtension,
 				compactionResult.usage,
+				{ placement: compactionResult.placement, label: compactionResult.label },
 			);
 			const result: CompactionResult = {
 				...compactionResult,
@@ -875,6 +913,7 @@ export class AgentSession {
 		this.agent.state.systemPrompt = inference.agentContext.systemPrompt;
 		this.agent.state.messages = inference.agentContext.messages;
 		this.agent.state.tools = inference.agentContext.tools ?? [];
+		this._lastDispatchedContext = inference.llmContext;
 		this._discardPendingInferenceCompaction();
 		await this._emitCommittedCompaction(
 			pending.candidate.entry,
@@ -2312,8 +2351,10 @@ export class AgentSession {
 			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
+				const sourceContext = await this._prepareCurrentSourceContext(this._compactionAbortController.signal);
 				const result = (await this._extensionRunner.emit({
 					type: "session_before_compact",
+					sourceContext: snapshotContext(sourceContext),
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions,
@@ -2337,6 +2378,8 @@ export class AgentSession {
 			let tokensBefore: number;
 			let usage: Usage | undefined;
 			let details: unknown;
+			let placement: CompactionResult["placement"];
+			let label: string | undefined;
 
 			if (extensionCompaction) {
 				// Extension provided compaction content
@@ -2345,6 +2388,8 @@ export class AgentSession {
 				tokensBefore = extensionCompaction.tokensBefore;
 				usage = extensionCompaction.usage;
 				details = extensionCompaction.details;
+				placement = extensionCompaction.placement;
+				label = extensionCompaction.label;
 			} else {
 				// Generate compaction result
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
@@ -2366,16 +2411,22 @@ export class AgentSession {
 				tokensBefore = result.tokensBefore;
 				usage = result.usage;
 				details = result.details;
+				placement = result.placement;
+				label = result.label;
 			}
 
 			if (this._compactionAbortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage, {
+				placement,
+				label,
+			});
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._lastDispatchedContext = undefined;
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2400,6 +2451,8 @@ export class AgentSession {
 				estimatedTokensAfter,
 				usage,
 				details,
+				placement,
+				label,
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
 			this._compactionAbortController = undefined;
@@ -2545,8 +2598,13 @@ export class AgentSession {
 			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
+				const sourceContext = this._lastDispatchedContext;
+				if (!sourceContext) {
+					throw new Error("Overflow recovery has no prepared provider context");
+				}
 				const extensionResult = (await this._extensionRunner.emit({
 					type: "session_before_compact",
+					sourceContext: snapshotContext(sourceContext),
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions: undefined,
@@ -2577,6 +2635,8 @@ export class AgentSession {
 			let tokensBefore: number;
 			let usage: Usage | undefined;
 			let details: unknown;
+			let placement: CompactionResult["placement"];
+			let label: string | undefined;
 
 			if (extensionCompaction) {
 				// Extension provided compaction content
@@ -2585,6 +2645,8 @@ export class AgentSession {
 				tokensBefore = extensionCompaction.tokensBefore;
 				usage = extensionCompaction.usage;
 				details = extensionCompaction.details;
+				placement = extensionCompaction.placement;
+				label = extensionCompaction.label;
 			} else {
 				// Generate compaction result
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
@@ -2606,6 +2668,8 @@ export class AgentSession {
 				tokensBefore = compactResult.tokensBefore;
 				usage = compactResult.usage;
 				details = compactResult.details;
+				placement = compactResult.placement;
+				label = compactResult.label;
 			}
 
 			if (this._autoCompactionAbortController.signal.aborted) {
@@ -2637,6 +2701,7 @@ export class AgentSession {
 				details,
 				fromExtension,
 				usage,
+				{ placement, label },
 			);
 			this.sessionManager.commitCompactionCandidate(candidate);
 			this.agent.state.messages = candidate.context.messages;
@@ -2648,6 +2713,8 @@ export class AgentSession {
 				estimatedTokensAfter,
 				usage,
 				details,
+				placement,
+				label,
 			};
 			await this._emitCommittedCompaction(candidate.entry, fromExtension, reason, willRetry, result);
 

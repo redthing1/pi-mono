@@ -126,6 +126,7 @@ describe("ExtensionRunner", () => {
 	function createBeforeCompactEvent(): SessionBeforeCompactEvent {
 		return {
 			type: "session_before_compact",
+			sourceContext: { systemPrompt: "system", messages: [] },
 			preparation: {
 				firstKeptEntryId: "kept-entry",
 				messagesToSummarize: [],

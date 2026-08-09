@@ -40,6 +40,51 @@ describe("SessionManager compaction candidates", () => {
 		expect(session.getEntry(candidate.entry.id)).toBeUndefined();
 	});
 
+	it("previews, commits, and reloads after-retained placement", () => {
+		const tempDir = join(tmpdir(), `compaction-placement-${Date.now()}-${Math.random()}`);
+		tempDirs.push(tempDir);
+		mkdirSync(tempDir, { recursive: true });
+		const session = SessionManager.create(tempDir, tempDir);
+		const firstKeptEntryId = session.appendMessage(userMsg("keep"));
+		session.appendMessage(assistantMsg("latest"));
+		const candidate = session.createCompactionCandidate(
+			"summary",
+			firstKeptEntryId,
+			123,
+			undefined,
+			true,
+			undefined,
+			{ placement: "after-retained", label: "horizon" },
+		);
+
+		expect(candidate.entry.placement).toBe("after-retained");
+		expect(candidate.entry.label).toBe("horizon");
+		expect(candidate.context.messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"compactionSummary",
+		]);
+		expect(candidate.context.messages.at(-1)).toMatchObject({ label: "horizon" });
+		session.commitCompactionCandidate(candidate);
+
+		const sessionFile = session.getSessionFile();
+		if (!sessionFile) throw new Error("Expected a persisted session file");
+		const reopened = SessionManager.open(sessionFile, tempDir);
+		expect(reopened.buildSessionContext()).toEqual(candidate.context);
+	});
+
+	it("rejects after-retained placement at an assistant boundary", () => {
+		const session = SessionManager.inMemory();
+		session.appendMessage(userMsg("request"));
+		const assistantId = session.appendMessage(assistantMsg("response"));
+
+		expect(() =>
+			session.createCompactionCandidate("summary", assistantId, 123, undefined, true, undefined, {
+				placement: "after-retained",
+			}),
+		).toThrow(/user-like turn boundary/);
+	});
+
 	it("commits the exact entry whose context was previewed", () => {
 		const session = SessionManager.inMemory();
 		const firstKeptEntryId = session.appendMessage(userMsg("keep"));

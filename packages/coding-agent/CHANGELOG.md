@@ -85,7 +85,7 @@
 
 ### Added
 
-- Added transactional inference-boundary automatic compaction with extension-owned admission through `session_compaction_check` and immutable `SessionManager` compaction candidates.
+- Added transactional inference-boundary automatic compaction with extension-controlled triggering through `session_compaction_check`, exact prepared summary sources, persisted summary placement and labels, and immutable `SessionManager` compaction candidates.
 - Added `/retry` to continue a failed turn in place without persisting provider errors or creating retry branches.
 - Added fatal extension startup diagnostics and failure-aware `ctx.shutdown(message)` handling across interactive, print, JSON, and RPC modes.
 - Added extension APIs for custom workspace backends, including structured prompt construction, backend-owned mutation serialization and Bash overflow handling, and workspace identity for project-trust, footer, and terminal-title presentation.
@@ -123,6 +123,7 @@
 
 ### Fixed
 
+- Fixed successful compaction rendering the same summary twice in the interactive transcript.
 - Fixed session replacement binding extensions twice in RPC mode and rendering local project-trust warnings before extension workspace identity is restored in interactive mode.
 - Fixed reverse prompt search excluding prompts from inactive session branches.
 - Fixed native edit previews appearing only after tool arguments finished streaming, and improved their width-aware themed rendering.

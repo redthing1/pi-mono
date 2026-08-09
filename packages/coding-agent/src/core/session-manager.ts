@@ -68,11 +68,23 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	modelId: string;
 }
 
+export type CompactionPlacement = "before-retained" | "after-retained";
+
+export interface CompactionOptions {
+	placement?: CompactionPlacement;
+	/** Optional short label shown by clients for this compaction technique. */
+	label?: string;
+}
+
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	type: "compaction";
 	summary: string;
 	/** First retained pre-checkpoint entry, or null when the checkpoint replaces the whole prior context. */
 	firstKeptEntryId: string | null;
+	/** Model-visible summary position. Missing legacy values mean "before-retained". */
+	placement?: CompactionPlacement;
+	/** Optional short label shown by clients. */
+	label?: string;
 	tokensBefore: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
@@ -420,7 +432,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
 	}
 	if (entry.type === "compaction") {
-		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp, entry.label)];
 	}
 	return [];
 }
@@ -429,9 +441,10 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
  * Build the active, compaction-aware session entry list.
  *
  * This follows the current leaf path. If the path contains compaction entries,
- * the latest compaction is represented by the compaction entry itself, followed
- * by the kept non-compaction entries starting at firstKeptEntryId and all entries
- * after the compaction entry. Older summaries and summarized entries are omitted.
+ * the latest compaction is represented with the kept non-compaction entries
+ * starting at firstKeptEntryId, ordered before or after them according to its
+ * placement, then all entries after the compaction entry. Older summaries and
+ * summarized entries are omitted.
  */
 export function buildContextEntries(
 	entries: SessionEntry[],
@@ -456,7 +469,7 @@ export function buildContextEntries(
 		return path;
 	}
 
-	const contextEntries: SessionEntry[] = [compaction];
+	const retainedEntries: SessionEntry[] = [];
 	if (compaction.firstKeptEntryId !== null) {
 		let foundFirstKept = false;
 		for (let i = 0; i < compactionIdx; i++) {
@@ -465,12 +478,14 @@ export function buildContextEntries(
 				foundFirstKept = true;
 			}
 			if (foundFirstKept && entry.type !== "compaction") {
-				contextEntries.push(entry);
+				retainedEntries.push(entry);
 			}
 		}
 	}
-	contextEntries.push(...path.slice(compactionIdx + 1));
-	return contextEntries;
+	const postCompactionEntries = path.slice(compactionIdx + 1);
+	return compaction.placement === "after-retained"
+		? [...retainedEntries, compaction, ...postCompactionEntries]
+		: [compaction, ...retainedEntries, ...postCompactionEntries];
 }
 
 /**
@@ -1157,8 +1172,10 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		options: CompactionOptions = {},
 	): CompactionCandidate<T> {
-		if (firstKeptEntryId !== null) this._assertValidCompactionAnchor(firstKeptEntryId);
+		const placement = options.placement ?? "before-retained";
+		if (firstKeptEntryId !== null) this._assertValidCompactionAnchor(firstKeptEntryId, placement);
 
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -1167,6 +1184,8 @@ export class SessionManager {
 			timestamp: new Date().toISOString(),
 			summary,
 			firstKeptEntryId,
+			placement,
+			label: options.label,
 			tokensBefore,
 			details,
 			usage,
@@ -1191,7 +1210,10 @@ export class SessionManager {
 			throw new Error(`Compaction candidate entry id ${candidate.entry.id} is already in use`);
 		}
 		if (candidate.entry.firstKeptEntryId !== null) {
-			this._assertValidCompactionAnchor(candidate.entry.firstKeptEntryId);
+			this._assertValidCompactionAnchor(
+				candidate.entry.firstKeptEntryId,
+				candidate.entry.placement ?? "before-retained",
+			);
 		}
 		this._appendEntry(candidate.entry);
 		return candidate.entry.id;
@@ -1205,6 +1227,7 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		options: CompactionOptions = {},
 	): string {
 		const candidate = this.createCompactionCandidate(
 			summary,
@@ -1213,11 +1236,12 @@ export class SessionManager {
 			details,
 			fromHook,
 			usage,
+			options,
 		);
 		return this.commitCompactionCandidate(candidate);
 	}
 
-	private _assertValidCompactionAnchor(firstKeptEntryId: string): void {
+	private _assertValidCompactionAnchor(firstKeptEntryId: string, placement: CompactionPlacement): void {
 		const entry = this.buildContextEntries().find((candidate) => candidate.id === firstKeptEntryId);
 		if (!entry) {
 			throw new Error(
@@ -1232,6 +1256,19 @@ export class SessionManager {
 			throw new Error(
 				`Compaction first kept entry ${firstKeptEntryId} must be a stable context-visible non-compaction entry`,
 			);
+		}
+		if (placement === "after-retained") {
+			const message = sessionEntryToContextMessages(entry)[0];
+			if (
+				message?.role !== "user" &&
+				message?.role !== "custom" &&
+				message?.role !== "bashExecution" &&
+				message?.role !== "branchSummary"
+			) {
+				throw new Error(
+					`After-retained compaction anchor ${firstKeptEntryId} must begin at a user-like turn boundary`,
+				);
+			}
 		}
 	}
 

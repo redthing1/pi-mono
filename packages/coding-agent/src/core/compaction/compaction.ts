@@ -13,6 +13,7 @@ import { convertToLlm } from "../messages.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
+	type CompactionPlacement,
 	type SessionEntry,
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
@@ -88,6 +89,10 @@ function getMessageFromEntryForCompaction(entry: SessionEntry): AgentMessage | u
 export interface CompactionResult<T = unknown> {
 	summary: string;
 	firstKeptEntryId: string | null;
+	/** Model-visible summary position. Defaults to "before-retained" when omitted. */
+	placement?: CompactionPlacement;
+	/** Optional short label shown by clients for this compaction technique. */
+	label?: string;
 	tokensBefore: number;
 	estimatedTokensAfter?: number;
 	/** Usage from the LLM call(s) that generated this summary, if available */

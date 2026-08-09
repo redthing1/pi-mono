@@ -235,6 +235,8 @@ export {
 	buildSessionContext,
 	type CompactionCandidate,
 	type CompactionEntry,
+	type CompactionOptions,
+	type CompactionPlacement,
 	CURRENT_SESSION_VERSION,
 	type CustomEntry,
 	type CustomMessageEntry,
