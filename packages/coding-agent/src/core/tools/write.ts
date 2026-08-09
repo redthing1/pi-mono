@@ -27,6 +27,8 @@ export interface WriteOperations {
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
 	/** Create directory recursively */
 	mkdir: (dir: string) => Promise<void>;
+	/** Serialize mutations for this backend. Defaults to the local filesystem queue. */
+	mutationQueue?: typeof withFileMutationQueue;
 }
 
 const defaultWriteOperations: WriteOperations = {
@@ -183,6 +185,7 @@ export function createWriteToolDefinition(
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
+	const mutationQueue = ops.mutationQueue ?? withFileMutationQueue;
 	return {
 		name: "write",
 		label: "write",
@@ -200,7 +203,7 @@ export function createWriteToolDefinition(
 		) {
 			const absolutePath = resolveToCwd(path, cwd);
 			const dir = dirname(absolutePath);
-			return withFileMutationQueue(absolutePath, async () => {
+			return mutationQueue(absolutePath, async () => {
 				// Do not reject from an abort event listener here: that would release the
 				// mutation queue while an in-flight filesystem operation may still finish.
 				// Checking signal.aborted after each await observes the same aborts while

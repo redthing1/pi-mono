@@ -56,13 +56,14 @@ export async function executeBashWithOperations(
 	const outputChunks: string[] = [];
 	let outputBytes = 0;
 	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
+	const persistLocally = operations.managesFullOutput !== true;
 
 	let tempFilePath: string | undefined;
 	let tempFileStream: WriteStream | undefined;
 	let totalBytes = 0;
 
 	const ensureTempFile = () => {
-		if (tempFilePath) {
+		if (!persistLocally || tempFilePath) {
 			return;
 		}
 		const id = randomBytes(8).toString("hex");
@@ -125,7 +126,7 @@ export async function executeBashWithOperations(
 			exitCode: cancelled ? undefined : (result.exitCode ?? undefined),
 			cancelled,
 			truncated: truncationResult.truncated,
-			fullOutputPath: tempFilePath,
+			fullOutputPath: result.fullOutputPath ?? tempFilePath,
 		};
 	} catch (err) {
 		// Check if it was an abort

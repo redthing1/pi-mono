@@ -76,6 +76,8 @@ export interface EditOperations {
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
 	/** Check if file is readable and writable (throw if not) */
 	access: (absolutePath: string) => Promise<void>;
+	/** Serialize mutations for this backend. Defaults to the local filesystem queue. */
+	mutationQueue?: typeof withFileMutationQueue;
 }
 
 const defaultEditOperations: EditOperations = {
@@ -298,6 +300,7 @@ export function createEditToolDefinition(
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
+	const mutationQueue = ops.mutationQueue ?? withFileMutationQueue;
 	return {
 		name: "edit",
 		label: "edit",
@@ -318,7 +321,7 @@ export function createEditToolDefinition(
 			const { path, edits } = validateEditInput(input);
 			const absolutePath = resolveToCwd(path, cwd);
 
-			return withFileMutationQueue(absolutePath, async () => {
+			return mutationQueue(absolutePath, async () => {
 				// Do not reject from an abort event listener here: that would release the
 				// mutation queue while an in-flight filesystem operation may still finish.
 				// Checking signal.aborted after each await observes the same aborts while

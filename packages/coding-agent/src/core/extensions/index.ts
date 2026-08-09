@@ -81,6 +81,7 @@ export type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	ExtensionWorkspaceInfo,
 	FindToolCallEvent,
 	FindToolResultEvent,
 	GetActiveToolsHandler,

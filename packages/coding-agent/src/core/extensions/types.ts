@@ -125,6 +125,14 @@ export interface WorkingIndicatorOptions {
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
 
+/** Active workspace identity supplied by an extension-backed workspace provider. */
+export interface ExtensionWorkspaceInfo {
+	/** Human-facing identity, such as `host:/path`. */
+	label: string;
+	/** Local project resources do not apply to this workspace. */
+	projectTrust: "isolated";
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -192,6 +200,12 @@ export interface ExtensionUIContext {
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
+
+	/**
+	 * Set the active workspace identity for interactive core UI, or clear it.
+	 * Workspace providers may isolate local project resources from the active workspace.
+	 */
+	setWorkspaceInfo?(info: ExtensionWorkspaceInfo | undefined): void;
 
 	/** Show a custom component with keyboard focus. */
 	custom<T>(

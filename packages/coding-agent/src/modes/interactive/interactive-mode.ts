@@ -74,6 +74,7 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	ExtensionWorkspaceInfo,
 	MarkdownTransformer,
 	ProjectTrustContext,
 	WorkingIndicatorOptions,
@@ -470,6 +471,7 @@ export class InteractiveMode {
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
+	private extensionWorkspaceInfo: ExtensionWorkspaceInfo | undefined;
 	private extensionTerminalInputSubscriptions = new Set<{
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
@@ -2242,6 +2244,7 @@ export class InteractiveMode {
 		this.setCustomEditorComponent(undefined);
 		this.setupAutocompleteProvider();
 		this.defaultEditor.onExtensionShortcut = undefined;
+		this.extensionWorkspaceInfo = undefined;
 		this.updateTerminalTitle();
 		this.workingMessage = undefined;
 		this.workingVisible = true;
@@ -2423,6 +2426,10 @@ export class InteractiveMode {
 			setFooter: (factory) => this.setExtensionFooter(factory),
 			setHeader: (factory) => this.setExtensionHeader(factory),
 			setTitle: (title) => this.ui.terminal.setTitle(title),
+			setWorkspaceInfo: (info) => {
+				this.extensionWorkspaceInfo = info;
+				this.ui.requestRender();
+			},
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
@@ -3695,6 +3702,9 @@ export class InteractiveMode {
 	}
 
 	private renderProjectTrustWarningIfNeeded(): void {
+		if (this.extensionWorkspaceInfo?.projectTrust === "isolated") {
+			return;
+		}
 		if (this.settingsManager.isProjectTrusted() || !hasTrustRequiringProjectResources(this.sessionManager.getCwd())) {
 			return;
 		}
@@ -4724,6 +4734,12 @@ export class InteractiveMode {
 	}
 
 	private showTrustSelector(): void {
+		if (this.extensionWorkspaceInfo?.projectTrust === "isolated") {
+			this.showStatus(
+				`Project trust is not applicable to ${this.extensionWorkspaceInfo.label}. Local project resources are isolated; no trust decision or restart is required.`,
+			);
+			return;
+		}
 		const cwd = this.sessionManager.getCwd();
 		const trustStore = new ProjectTrustStore(this.runtimeHost.services.agentDir);
 		const savedDecision = trustStore.getEntry(cwd);

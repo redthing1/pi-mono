@@ -60,6 +60,8 @@ export interface BashToolDetails {
  * Override these to delegate command execution to remote systems (for example SSH).
  */
 export interface BashOperations {
+	/** Whether this backend owns storage for truncated full output. */
+	managesFullOutput?: boolean;
 	/**
 	 * Execute a command and stream output.
 	 * @param command The command to execute
@@ -76,7 +78,7 @@ export interface BashOperations {
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
 		},
-	) => Promise<{ exitCode: number | null }>;
+	) => Promise<{ exitCode: number | null; fullOutputPath?: string }>;
 }
 
 /**
@@ -367,7 +369,10 @@ export function createBashToolDefinition(
 			const launchResult = launchHookResult instanceof Promise ? await launchHookResult : launchHookResult;
 			if (launchResult && "block" in launchResult) throw new Error(launchResult.reason);
 			const launchOperations = launchResult?.operations ?? ops;
-			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
+			const output = new OutputAccumulator({
+				tempFilePrefix: "pi-bash",
+				persistFullOutput: launchOperations.managesFullOutput !== true,
+			});
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -429,21 +434,27 @@ export function createBashToolDefinition(
 				return snapshot;
 			};
 
-			const formatOutput = (snapshot: Awaited<ReturnType<typeof finishOutput>>, emptyText = "(no output)") => {
+			const formatOutput = (
+				snapshot: Awaited<ReturnType<typeof finishOutput>>,
+				emptyText = "(no output)",
+				operationFullOutputPath?: string,
+			) => {
 				const truncation = snapshot.truncation;
+				const fullOutputPath = operationFullOutputPath ?? snapshot.fullOutputPath;
 				let text = snapshot.content || emptyText;
 				let details: BashToolDetails | undefined;
 				if (truncation.truncated) {
-					details = { truncation, fullOutputPath: snapshot.fullOutputPath };
+					details = { truncation, fullOutputPath };
 					const startLine = truncation.totalLines - truncation.outputLines + 1;
 					const endLine = truncation.totalLines;
+					const fullOutputNotice = fullOutputPath ? ` Full output: ${fullOutputPath}` : "";
 					if (truncation.lastLinePartial) {
 						const lastLineSize = formatSize(output.getLastLineBytes());
-						text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}).${fullOutputNotice}]`;
 					} else if (truncation.truncatedBy === "lines") {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}.${fullOutputNotice}]`;
 					} else {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit).${fullOutputNotice}]`;
 					}
 				}
 				return { text, details };
@@ -453,6 +464,7 @@ export function createBashToolDefinition(
 
 			try {
 				let exitCode: number | null;
+				let operationFullOutputPath: string | undefined;
 				try {
 					const result = await launchOperations.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
@@ -461,6 +473,7 @@ export function createBashToolDefinition(
 						env: spawnContext.env,
 					});
 					exitCode = result.exitCode;
+					operationFullOutputPath = result.fullOutputPath;
 				} catch (err) {
 					const snapshot = await finishOutput();
 					const { text } = formatOutput(snapshot, "");
@@ -475,7 +488,7 @@ export function createBashToolDefinition(
 				}
 
 				const snapshot = await finishOutput();
-				const { text: outputText, details } = formatOutput(snapshot);
+				const { text: outputText, details } = formatOutput(snapshot, "(no output)", operationFullOutputPath);
 				if (exitCode !== 0 && exitCode !== null) {
 					throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
 				}
