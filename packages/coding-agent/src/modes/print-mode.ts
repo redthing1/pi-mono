@@ -37,6 +37,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let disposed = false;
+	let shutdownRequested = false;
+	let shutdownErrorMessage: string | undefined;
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	const disposeRuntime = async (): Promise<void> => {
@@ -45,6 +47,10 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
+	};
+	const finishRequestedShutdown = (): number => {
+		if (shutdownErrorMessage) console.error(shutdownErrorMessage);
+		return shutdownErrorMessage ? 1 : 0;
 	};
 
 	const registerSignalHandlers = (): void => {
@@ -98,6 +104,10 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					await session.reload();
 				},
 			},
+			shutdownHandler: (errorMessage) => {
+				shutdownRequested = true;
+				shutdownErrorMessage ??= errorMessage;
+			},
 			onError: (err) => {
 				console.error(`Extension error (${err.extensionPath}): ${err.error}`);
 			},
@@ -127,13 +137,16 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		}
 
 		await rebindSession();
+		if (shutdownRequested) return finishRequestedShutdown();
 
 		if (initialMessage) {
 			await session.prompt(initialMessage, { images: initialImages });
+			if (shutdownRequested) return finishRequestedShutdown();
 		}
 
 		for (const message of messages) {
 			await session.prompt(message);
+			if (shutdownRequested) return finishRequestedShutdown();
 		}
 
 		if (mode === "text") {

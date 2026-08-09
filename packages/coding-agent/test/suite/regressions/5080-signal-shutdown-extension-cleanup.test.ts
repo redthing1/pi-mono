@@ -27,7 +27,7 @@ type ShutdownThis = {
 };
 
 type InteractiveModePrototypeWithShutdown = {
-	shutdown(this: ShutdownThis, options?: { fromSignal?: boolean }): Promise<void>;
+	shutdown(this: ShutdownThis, options?: { fromSignal?: boolean; errorMessage?: string }): Promise<void>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown;
@@ -90,7 +90,10 @@ function createContext(order: string[], sessionManager = createSessionManager())
 	};
 }
 
-async function callShutdown(context: ShutdownThis, options?: { fromSignal?: boolean }): Promise<void> {
+async function callShutdown(
+	context: ShutdownThis,
+	options?: { fromSignal?: boolean; errorMessage?: string },
+): Promise<void> {
 	try {
 		await (interactiveModePrototype as InteractiveModePrototypeWithShutdown).shutdown.call(context, options);
 	} catch (error) {
@@ -167,6 +170,22 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 		for (const call of stdoutWrite.mock.calls) {
 			expect(call[0]).not.toContain("To resume this session:");
 		}
+	});
+
+	test("failed extension shutdown exits non-zero after cleanup and reports its message", async () => {
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+			throw new ProcessExitError();
+		}) as typeof process.exit);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const order: string[] = [];
+		const context = createContext(order);
+
+		await callShutdown(context, { errorMessage: "extension startup failed" });
+
+		expect(order).toEqual(["drainInput", "stop", "dispose"]);
+		expect(errorSpy).toHaveBeenCalledOnce();
+		expect(errorSpy).toHaveBeenCalledWith(chalk.red("extension startup failed"));
+		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 
 	test("re-entrant shutdown is a no-op", async () => {

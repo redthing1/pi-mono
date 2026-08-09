@@ -84,7 +84,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	// Shutdown request flag
 	let shutdownRequested = false;
+	let shutdownErrorMessage: string | undefined;
 	let shuttingDown = false;
+	let detachInput = () => {};
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	/** Helper for dialog methods with signal/timeout support */
@@ -342,8 +344,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					await session.reload();
 				},
 			},
-			shutdownHandler: () => {
+			shutdownHandler: (errorMessage) => {
 				shutdownRequested = true;
+				shutdownErrorMessage ??= errorMessage;
 			},
 			onError: (err) => {
 				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
@@ -381,6 +384,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	await rebindSession();
 	registerSignalHandlers();
+	await checkShutdownRequested();
 
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
@@ -707,9 +711,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	 * Check if shutdown was requested and perform shutdown if so.
 	 * Called after handling each command when waiting for the next command.
 	 */
-	let detachInput = () => {};
-
-	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<never> {
+	async function shutdown(exitCode = 0, signal?: NodeJS.Signals, errorMessage?: string): Promise<never> {
 		if (shuttingDown) {
 			process.exit(exitCode);
 		}
@@ -725,12 +727,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		if (signal !== "SIGTERM") {
 			await flushRawStdout();
 		}
+		if (errorMessage) console.error(errorMessage);
 		process.exit(exitCode);
 	}
 
 	async function checkShutdownRequested(): Promise<void> {
 		if (!shutdownRequested) return;
-		await shutdown();
+		await shutdown(shutdownErrorMessage ? 1 : 0, undefined, shutdownErrorMessage);
 	}
 
 	const handleInputLine = async (line: string) => {

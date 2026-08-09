@@ -19,6 +19,8 @@ import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
+class ProcessExitError extends Error {}
+
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
 	lineHandler: undefined as ((line: string) => void) | undefined,
@@ -187,8 +189,33 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 
 describe("RPC prompt response semantics", () => {
 	afterEach(() => {
+		vi.restoreAllMocks();
 		rpcIo.outputLines = [];
 		rpcIo.lineHandler = undefined;
+	});
+
+	it("exits non-zero without reading commands after an extension requests failed startup shutdown", async () => {
+		const { runtimeHost, cleanup } = await createRuntimeHost({ withAuth: true, responseDelayMs: 0 });
+		const originalBindExtensions = runtimeHost.session.bindExtensions.bind(runtimeHost.session);
+		vi.spyOn(runtimeHost.session, "bindExtensions").mockImplementation(async (bindings) => {
+			await originalBindExtensions(bindings);
+			bindings.shutdownHandler?.("extension startup failed");
+		});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+			throw new ProcessExitError();
+		}) as typeof process.exit);
+
+		try {
+			await expect(runRpcMode(runtimeHost)).rejects.toBeInstanceOf(ProcessExitError);
+			expect(errorSpy).toHaveBeenCalledOnce();
+			expect(errorSpy).toHaveBeenCalledWith("extension startup failed");
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(runtimeHost.dispose).toHaveBeenCalledOnce();
+			expect(rpcIo.lineHandler).toBeUndefined();
+		} finally {
+			await cleanup();
+		}
 	});
 
 	it("emits one failure response when prompt preflight rejects", async () => {

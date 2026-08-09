@@ -466,6 +466,7 @@ export class InteractiveMode {
 
 	// Shutdown state
 	private shutdownRequested = false;
+	private shutdownErrorMessage: string | undefined;
 
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
@@ -1878,7 +1879,8 @@ export class InteractiveMode {
 	 */
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		const uiContext = this.createExtensionUIContext();
-		await this.session.bindExtensions({
+		let bindingExtensions = true;
+		const binding = this.session.bindExtensions({
 			uiContext,
 			mode: "tui",
 			abortHandler: () => {
@@ -1933,16 +1935,26 @@ export class InteractiveMode {
 					await this.handleReloadCommand();
 				},
 			},
-			shutdownHandler: () => {
+			shutdownHandler: (errorMessage) => {
 				this.shutdownRequested = true;
-				if (this.session.isIdle) {
-					void this.shutdown();
+				this.shutdownErrorMessage ??= errorMessage;
+				if (this.session.isIdle && !bindingExtensions) {
+					void this.shutdown({ errorMessage: this.shutdownErrorMessage });
 				}
 			},
 			onError: (error) => {
 				this.showExtensionError(error.extensionPath, error.error, error.stack);
 			},
 		});
+		try {
+			await binding;
+		} finally {
+			bindingExtensions = false;
+		}
+		if (this.shutdownRequested && this.session.isIdle) {
+			await this.shutdown({ errorMessage: this.shutdownErrorMessage });
+			return;
+		}
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
@@ -2066,8 +2078,9 @@ export class InteractiveMode {
 				this.restoreQueuedMessagesToEditor({ abort: true });
 			},
 			hasPendingMessages: () => this.session.pendingMessageCount > 0,
-			shutdown: () => {
+			shutdown: (errorMessage) => {
 				this.shutdownRequested = true;
+				this.shutdownErrorMessage ??= errorMessage;
 			},
 			getContextUsage: () => this.session.getContextUsage(),
 			compact: (options) => {
@@ -3782,7 +3795,7 @@ export class InteractiveMode {
 	 */
 	private isShuttingDown = false;
 
-	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
+	private async shutdown(options?: { fromSignal?: boolean; errorMessage?: string }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 		// Keep signal handlers registered until terminal cleanup has completed.
@@ -3820,7 +3833,8 @@ export class InteractiveMode {
 			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
 		}
 
-		process.exit(0);
+		if (options?.errorMessage) console.error(chalk.red(options.errorMessage));
+		process.exit(options?.errorMessage ? 1 : 0);
 	}
 
 	private emergencyTerminalExit(): never {
@@ -3867,7 +3881,7 @@ export class InteractiveMode {
 	 */
 	private async checkShutdownRequested(): Promise<void> {
 		if (!this.shutdownRequested) return;
-		await this.shutdown();
+		await this.shutdown({ errorMessage: this.shutdownErrorMessage });
 	}
 
 	private registerSignalHandlers(): void {

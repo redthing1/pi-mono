@@ -2610,8 +2610,8 @@ export class AgentSession {
 					void this.abort();
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
-				shutdown: () => {
-					this._extensionShutdownHandler?.();
+				shutdown: (errorMessage) => {
+					this._extensionShutdownHandler?.(errorMessage);
 				},
 				getContextUsage: () => this.getContextUsage(),
 				compact: (options) => {

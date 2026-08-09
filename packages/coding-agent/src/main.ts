@@ -779,6 +779,12 @@ export async function main(args: string[], options?: MainOptions) {
 			...projectTrustDiagnostics,
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
+			...resourceLoader.getExtensions().extensions.flatMap((extension) =>
+				(extension.startupErrors ?? []).map((message) => ({
+					type: "error" as const,
+					message: `Extension "${extension.path}": ${message}`,
+				})),
+			),
 			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
 				type: "error" as const,
 				message: `Failed to load extension "${path}": ${error}`,
@@ -919,6 +925,14 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
+	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
+		reportDiagnostics(runtime.diagnostics);
+		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
+			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
+		}
+		process.exit(1);
+	}
+
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
 	if (appMode !== "rpc") {
@@ -945,12 +959,6 @@ export async function main(args: string[], options?: MainOptions) {
 
 	time("resolveModelScope");
 	reportDiagnostics(runtime.diagnostics);
-	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
-		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
-			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
-		}
-		process.exit(1);
-	}
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {

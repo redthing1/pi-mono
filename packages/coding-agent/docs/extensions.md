@@ -1016,15 +1016,16 @@ pi.on("tool_result", async (event, ctx) => {
 
 Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
 
-### ctx.shutdown()
+### ctx.shutdown(errorMessage?)
 
 Request a graceful shutdown of pi.
 
 - **Interactive mode:** Deferred until the agent becomes idle (after processing all queued steering and follow-up messages).
 - **RPC mode:** Deferred until the next idle state (after completing the current command response, when waiting for the next command).
-- **Print mode:** No-op. The process exits automatically when all prompts are processed.
+- **Print mode:** Stops before processing another prompt.
 
 Emits `session_shutdown` event to all extensions before exiting. Available in all contexts (event handlers, tools, commands, shortcuts).
+Passing an error message reports it once after cleanup and exits with a nonzero status.
 
 ```typescript
 pi.on("tool_call", (event, ctx) => {
@@ -1328,6 +1329,10 @@ export default function (pi: ExtensionAPI) {
 ```
 
 ## ExtensionAPI Methods
+
+### pi.reportStartupError(message)
+
+Report a fatal configuration error while registering an extension. Pi keeps the extension loaded for early lifecycle handlers, reports the error, and exits before reading stdin or `@file` arguments.
 
 ### pi.on(event, handler)
 

@@ -187,7 +187,7 @@ export type SwitchSessionHandler = (
 
 export type ReloadHandler = () => Promise<void>;
 
-export type ShutdownHandler = () => void;
+export type ShutdownHandler = (errorMessage?: string) => void;
 
 /**
  * Helper function to emit session_shutdown event to extensions.
@@ -664,8 +664,8 @@ export class ExtensionRunner {
 	 * Request a graceful shutdown. Called by extension tools and event handlers.
 	 * The actual shutdown behavior is provided by the mode via bindExtensions().
 	 */
-	shutdown(): void {
-		this.shutdownHandler();
+	shutdown(errorMessage?: string): void {
+		this.shutdownHandler(errorMessage);
 	}
 
 	getActiveTools(): string[] {
@@ -742,9 +742,9 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
 			},
-			shutdown: () => {
+			shutdown: (errorMessage) => {
 				runner.assertActive();
-				runner.shutdownHandler();
+				runner.shutdownHandler(errorMessage);
 			},
 			getContextUsage: () => {
 				runner.assertActive();

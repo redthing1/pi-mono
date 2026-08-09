@@ -261,6 +261,12 @@ function createExtensionAPI(
 			extension.handlers.set(event, list);
 		},
 
+		reportStartupError(message: string): void {
+			runtime.assertActive();
+			extension.startupErrors ??= [];
+			extension.startupErrors.push(message);
+		},
+
 		registerTool(tool: ToolDefinition): void {
 			runtime.assertActive();
 			extension.tools.set(tool.name, {
@@ -484,6 +490,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		startupErrors: [],
 	};
 }
 

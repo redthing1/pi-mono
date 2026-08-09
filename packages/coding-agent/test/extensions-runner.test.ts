@@ -155,6 +155,38 @@ describe("ExtensionRunner", () => {
 			expect(result.result).toEqual({ trusted: "no", remember: true });
 			expect(result.errors).toEqual([]);
 		});
+
+		it("retains trust handlers when an extension reports a startup error", async () => {
+			const extensionPath = path.join(extensionsDir, "startup-error.ts");
+			fs.writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "no" }));
+	pi.reportStartupError("invalid startup input");
+}`,
+			);
+
+			const extensionsResult = await loadExtensions([extensionPath], tempDir);
+			const result = await emitProjectTrustEvent(
+				extensionsResult,
+				{ type: "project_trust", cwd: tempDir },
+				{
+					cwd: tempDir,
+					mode: "print",
+					hasUI: false,
+					ui: {
+						select: async () => undefined,
+						confirm: async () => false,
+						input: async () => undefined,
+						notify: () => {},
+					},
+				},
+			);
+
+			expect(extensionsResult.errors).toEqual([]);
+			expect(extensionsResult.extensions[0]?.startupErrors).toEqual(["invalid startup input"]);
+			expect(result.result).toEqual({ trusted: "no" });
+		});
 	});
 
 	describe("shortcut conflicts", () => {

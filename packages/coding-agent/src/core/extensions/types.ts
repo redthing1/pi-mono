@@ -353,8 +353,8 @@ export interface ExtensionContext {
 	abort(): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
-	/** Gracefully shutdown pi and exit. Available in all contexts. */
-	shutdown(): void;
+	/** Gracefully shutdown pi and exit. A message marks the shutdown as a failure. Available in all contexts. */
+	shutdown(errorMessage?: string): void;
 	/** Get current context usage for the active model. */
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
@@ -1287,6 +1287,9 @@ export interface ExtensionAPI {
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
 
+	/** Report a fatal configuration error discovered while registering the extension. */
+	reportStartupError(message: string): void;
+
 	// =========================================================================
 	// Tool Registration
 	// =========================================================================
@@ -1700,7 +1703,7 @@ export interface ExtensionContextActions {
 	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
 	hasPendingMessages: () => boolean;
-	shutdown: () => void;
+	shutdown: (errorMessage?: string) => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
@@ -1753,6 +1756,7 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	startupErrors?: string[];
 }
 
 /** Result of loading extensions. */

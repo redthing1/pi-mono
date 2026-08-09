@@ -139,4 +139,24 @@ describe("runPrintMode", () => {
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
+
+	it("does not prompt after an extension requests failed startup shutdown", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "unused" }));
+		const { session } = runtimeHost;
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		session.bindExtensions.mockImplementation(async (bindings: { shutdownHandler?: (message?: string) => void }) => {
+			bindings.shutdownHandler?.("extension startup failed");
+		});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+			initialMessage: "must not run",
+		});
+
+		expect(exitCode).toBe(1);
+		expect(errorSpy).toHaveBeenCalledOnce();
+		expect(errorSpy).toHaveBeenCalledWith("extension startup failed");
+		expect(session.prompt).not.toHaveBeenCalled();
+		expect(runtimeHost.dispose).toHaveBeenCalledOnce();
+	});
 });
