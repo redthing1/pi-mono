@@ -120,6 +120,7 @@
 
 ### Fixed
 
+- Fixed session replacement binding extensions twice in RPC mode and rendering local project-trust warnings before extension workspace identity is restored in interactive mode.
 - Fixed reverse prompt search excluding prompts from inactive session branches.
 - Fixed native edit previews appearing only after tool arguments finished streaming, and improved their width-aware themed rendering.
 - Fixed explicitly provider-scoped startup waiting on unrelated dynamic providers instead of refreshing only the selected provider.

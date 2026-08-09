@@ -79,6 +79,7 @@ type RebindContext = {
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
 	renderCurrentSessionState: () => void;
+	renderProjectTrustWarningIfNeeded: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
 	updateAvailableProviderCount: () => Promise<void>;
@@ -289,6 +290,7 @@ describe("regression #5943: session_start transient UI", () => {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => events.push("apply"),
 				renderCurrentSessionState: () => events.push("render"),
+				renderProjectTrustWarningIfNeeded: () => events.push("trust"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
@@ -304,7 +306,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 			await interactiveModePrototype.rebindCurrentSession.call(context, { renderBeforeBind: true });
 
-			expect(events).toEqual(["apply", "render", "subscribe", "bind", "notify:Hello Error"]);
+			expect(events).toEqual(["apply", "render", "subscribe", "bind", "notify:Hello Error", "trust"]);
 		} finally {
 			harness.cleanup();
 		}
@@ -330,6 +332,7 @@ describe("regression #5943: session_start transient UI", () => {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
 				renderCurrentSessionState: () => events.push("render"),
+				renderProjectTrustWarningIfNeeded: () => events.push("trust"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
@@ -359,6 +362,7 @@ describe("regression #5943: session_start transient UI", () => {
 				"bind",
 				"message_start:custom:custom from start",
 				"message_end:custom:custom from start",
+				"trust",
 			]);
 		} finally {
 			harness.cleanup();
@@ -382,6 +386,7 @@ describe("regression #5943: session_start transient UI", () => {
 			const context: RebindContext = {
 				applyRuntimeSettings: () => {},
 				renderCurrentSessionState: () => events.push("render"),
+				renderProjectTrustWarningIfNeeded: () => events.push("trust"),
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
@@ -407,6 +412,7 @@ describe("regression #5943: session_start transient UI", () => {
 			await harness.session.agent.waitForIdle();
 
 			expect(events.slice(0, 3)).toEqual(["render", "subscribe", "bind"]);
+			expect(events.indexOf("trust")).toBeGreaterThan(events.indexOf("bind"));
 			expect(events).toContain("message_start:user:user from start");
 			expect(events).toContain("message_end:user:user from start");
 			expect(events).toContain("message_end:assistant:assistant from start");

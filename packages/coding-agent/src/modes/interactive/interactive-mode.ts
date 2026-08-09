@@ -1999,7 +1999,9 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (!options.renderBeforeBind) {
+		if (options.renderBeforeBind) {
+			this.renderProjectTrustWarningIfNeeded();
+		} else {
 			this.subscribeToAgent();
 		}
 
@@ -2024,7 +2026,7 @@ export class InteractiveMode {
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.toolExecutionPresenter.reset();
-		this.renderInitialMessages();
+		this.renderInitialMessages({ projectTrustWarning: false });
 	}
 
 	/**
@@ -3681,7 +3683,7 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Text(text, 1, 0));
 	}
 
-	renderInitialMessages(): void {
+	renderInitialMessages(options: { projectTrustWarning?: boolean } = {}): void {
 		const allEntries = this.sessionManager.getEntries();
 		this.defaultEditor.clearHistory();
 		for (const entry of allEntries) {
@@ -3691,7 +3693,9 @@ export class InteractiveMode {
 		}
 		const entries = this.sessionManager.buildContextEntries();
 		this.renderSessionEntries(entries, { updateFooter: true });
-		this.renderProjectTrustWarningIfNeeded();
+		if (options.projectTrustWarning !== false) {
+			this.renderProjectTrustWarningIfNeeded();
+		}
 
 		// Show compaction info if session was compacted
 		const compactionCount = allEntries.filter((e) => e.type === "compaction").length;

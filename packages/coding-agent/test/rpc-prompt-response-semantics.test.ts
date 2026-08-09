@@ -172,6 +172,7 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
+	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -181,7 +182,7 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, runtimeHost, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -281,6 +282,37 @@ describe("RPC prompt response semantics", () => {
 			});
 
 			await sleep(150);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("does not rebind twice after a successful session replacement", async () => {
+		const { lineHandler, runtimeHost, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
+		const bindExtensions = vi.spyOn(runtimeHost.session, "bindExtensions");
+		const setRebindSession = vi.mocked(runtimeHost.setRebindSession);
+		const rebindSession = setRebindSession.mock.calls[0]?.[0];
+		if (!rebindSession) {
+			throw new Error("RPC mode did not register its session rebind callback");
+		}
+		vi.mocked(runtimeHost.newSession).mockImplementation(async () => {
+			await rebindSession(runtimeHost.session);
+			return { cancelled: false };
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "new-session", type: "new_session" }));
+
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "new-session",
+					type: "response",
+					command: "new_session",
+					success: true,
+					data: { cancelled: false },
+				});
+			});
+			expect(bindExtensions).toHaveBeenCalledTimes(1);
 		} finally {
 			await cleanup();
 		}

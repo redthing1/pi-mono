@@ -6,6 +6,7 @@ type RebindContext = {
 	unsubscribe?: () => void;
 	applyRuntimeSettings: () => void;
 	renderCurrentSessionState: () => void;
+	renderProjectTrustWarningIfNeeded: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
 	subscribeToAgent: () => void;
 	updateAvailableProviderCount: () => Promise<void>;
@@ -41,6 +42,7 @@ describe("overlapping startup and replacement session rebinds", () => {
 			session: startupSession,
 			applyRuntimeSettings: () => {},
 			renderCurrentSessionState: () => {},
+			renderProjectTrustWarningIfNeeded: () => {},
 			bindCurrentSessionExtensions: () => {
 				bindCount += 1;
 				return bindCount === 1 ? startupBind : replacementBind;
