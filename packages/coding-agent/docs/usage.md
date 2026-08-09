@@ -42,6 +42,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/settings` | Thinking level, theme, message delivery, transport |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
+| `/retry` | Retry the failed turn in place without creating a session branch |
 | `/name <name>` | Set session display name |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |

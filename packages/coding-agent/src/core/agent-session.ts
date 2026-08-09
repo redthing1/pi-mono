@@ -705,8 +705,10 @@ export class AgentSession {
 				event.message.role === "assistant" ||
 				event.message.role === "toolResult"
 			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				// Failed attempts are diagnostics, not conversation history.
+				if (event.message.role !== "assistant" || event.message.stopReason !== "error") {
+					this.sessionManager.appendMessage(event.message);
+				}
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -1123,10 +1125,10 @@ export class AgentSession {
 	// Prompting
 	// =========================================================================
 
-	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+	private async _runAgent(start: () => Promise<void>): Promise<void> {
 		this._isAgentRunActive = true;
 		try {
-			await this.agent.prompt(messages);
+			await start();
 			while (await this._handlePostAgentRun()) {
 				await this.agent.continue();
 			}
@@ -1135,6 +1137,10 @@ export class AgentSession {
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
 		}
+	}
+
+	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		await this._runAgent(() => this.agent.prompt(messages));
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
@@ -1161,6 +1167,10 @@ export class AgentSession {
 		const shouldHoldQueues = this._shouldYieldForCompaction(msg);
 		if (await this._checkCompaction(msg)) {
 			return true;
+		}
+
+		if (msg.stopReason === "error") {
+			this._discardTrailingAssistantError();
 		}
 
 		// Resume queued messages unless this run yielded for compaction and compaction did not complete.
@@ -1336,6 +1346,22 @@ export class AgentSession {
 
 		preflightResult?.(true);
 		await this._runAgentPrompt(messages);
+	}
+
+	/** Retry an unfinished turn without adding another user message or session branch. */
+	async retry(): Promise<void> {
+		if (this.isStreaming) {
+			throw new Error("Cannot retry while the agent is running.");
+		}
+		if (this.isCompacting) {
+			throw new Error("Cannot retry while compaction is in progress.");
+		}
+
+		if (!this.agent.state.errorMessage) {
+			throw new Error("There is no failed turn to retry.");
+		}
+
+		await this._runAgent(() => this.agent.continue());
 	}
 
 	/**
@@ -2874,11 +2900,7 @@ export class AgentSession {
 			errorMessage: message.errorMessage || "Unknown error",
 		});
 
-		// Remove error message from agent state (keep in session for history)
-		const messages = this.agent.state.messages;
-		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-			this.agent.state.messages = messages.slice(0, -1);
-		}
+		this._discardTrailingAssistantError();
 
 		// Wait with exponential backoff (abortable)
 		this._retryAbortController = new AbortController();
@@ -2900,6 +2922,14 @@ export class AgentSession {
 		}
 
 		return true;
+	}
+
+	private _discardTrailingAssistantError(): void {
+		const messages = this.agent.state.messages;
+		const lastMessage = messages.at(-1);
+		if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
 	}
 
 	/**
