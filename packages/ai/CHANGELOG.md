@@ -68,6 +68,7 @@
 
 ### Added
 
+- Added an optional stream-metadata observer for provider-specific metadata-only OpenAI-compatible chunks.
 - Exported provider-neutral context token estimation helpers for inference-boundary admission policies.
 - Added optional `OAuthAuth.isSubscription` metadata for distinguishing subscription-backed authentication from generic OAuth sign-in.
 - Added explicit `TelemetryContext` propagation across stream, deferred, and image request options using the vendor-neutral `@earendil-works/pi-telemetry` contract.

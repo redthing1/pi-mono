@@ -173,6 +173,12 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 
 export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	/**
+	 * Optional observer for provider-specific metadata-only streaming chunks.
+	 * Stream implementations may omit this callback when their transport does
+	 * not expose metadata independently from assistant content.
+	 */
+	onStreamMetadata?: (metadata: unknown, model: Model<Api>) => void | Promise<void>;
+	/**
 	 * Optional callback invoked after an HTTP response is received and before
 	 * its body stream is consumed.
 	 */

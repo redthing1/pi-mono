@@ -451,7 +451,10 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
-				if (!choice) continue;
+				if (!choice) {
+					await options?.onStreamMetadata?.(chunk, model);
+					continue;
+				}
 
 				// Fallback: some providers (e.g., Moonshot) return usage
 				// in choice.usage instead of the standard chunk.usage
