@@ -85,6 +85,7 @@
 
 ### Added
 
+- Added transactional inference-boundary automatic compaction with extension-owned admission through `session_compaction_check` and immutable `SessionManager` compaction candidates.
 - Added `/retry` to continue a failed turn in place without persisting provider errors or creating retry branches.
 - Added fatal extension startup diagnostics and failure-aware `ctx.shutdown(message)` handling across interactive, print, JSON, and RPC modes.
 - Added extension APIs for custom workspace backends, including structured prompt construction, backend-owned mutation serialization and Bash overflow handling, and workspace identity for project-trust, footer, and terminal-title presentation.

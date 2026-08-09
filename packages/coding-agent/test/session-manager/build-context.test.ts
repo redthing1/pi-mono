@@ -38,7 +38,12 @@ function msg(id: string, parentId: string | null, role: "user" | "assistant", te
 	};
 }
 
-function compaction(id: string, parentId: string | null, summary: string, firstKeptEntryId: string): CompactionEntry {
+function compaction(
+	id: string,
+	parentId: string | null,
+	summary: string,
+	firstKeptEntryId: string | null,
+): CompactionEntry {
 	return {
 		type: "compaction",
 		id,
@@ -159,6 +164,18 @@ describe("buildSessionContext", () => {
 			expect((ctx.messages[0] as any).summary).toContain("Empty summary");
 		});
 
+		it("supports a checkpoint that replaces the complete prior context", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "oversized request"),
+				compaction("2", "1", "Complete-context checkpoint", null),
+				msg("3", "2", "assistant", "continued"),
+			];
+
+			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["2", "3"]);
+			const ctx = buildSessionContext(entries);
+			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "assistant"]);
+		});
+
 		it("multiple compactions uses latest", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "a"),
@@ -174,6 +191,25 @@ describe("buildSessionContext", () => {
 			// Should use second summary, keep from 4
 			expect(ctx.messages).toHaveLength(4);
 			expect((ctx.messages[0] as any).summary).toContain("Second summary");
+		});
+
+		it("omits an older checkpoint when the latest retained span crosses it", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "a"),
+				msg("2", "1", "assistant", "b"),
+				compaction("3", "2", "First summary", "1"),
+				msg("4", "3", "user", "c"),
+				msg("5", "4", "assistant", "d"),
+				compaction("6", "5", "Second summary", "1"),
+				msg("7", "6", "user", "e"),
+			];
+
+			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "1", "2", "4", "5", "7"]);
+			const summaries = buildSessionContext(entries).messages.filter(
+				(message) => message.role === "compactionSummary",
+			);
+			expect(summaries).toHaveLength(1);
+			expect((summaries[0] as { summary: string }).summary).toContain("Second summary");
 		});
 
 		it("buildContextEntries returns compaction-aware entries including custom entries", () => {

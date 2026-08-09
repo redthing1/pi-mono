@@ -1,6 +1,7 @@
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
+	type Context,
 	EventStream,
 	type Message,
 	type Model,
@@ -79,6 +80,18 @@ function createUserMessage(text: string): UserMessage {
 // Simple identity converter for tests - just passes through standard messages
 function identityConverter(messages: AgentMessage[]): Message[] {
 	return messages.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[];
+}
+
+function createCompletedStream(text = "done"): MockAssistantStream {
+	const stream = new MockAssistantStream();
+	queueMicrotask(() => {
+		stream.push({
+			type: "done",
+			reason: "stop",
+			message: createAssistantMessage([{ type: "text", text }]),
+		});
+	});
+	return stream;
 }
 
 describe("default stream function compatibility", () => {
@@ -269,6 +282,213 @@ describe("agentLoop with AgentMessage", () => {
 		expect(transformedMessages.length).toBe(2);
 		// Then convertToLlm receives the pruned messages
 		expect(convertedMessages.length).toBe(2);
+	});
+
+	it("prepares the exact provider-bound context before resolving auth", async () => {
+		const transformed = [createUserMessage("transformed")];
+		const tools: AgentTool[] = [];
+		const order: string[] = [];
+		let observedContext: Context | undefined;
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			maxTokens: 321,
+			reasoning: "high",
+			transformContext: async () => {
+				order.push("transform");
+				return transformed;
+			},
+			convertToLlm: (messages) => {
+				order.push("convert");
+				return identityConverter(messages);
+			},
+			beforeInference: (prepared) => {
+				order.push("beforeInference");
+				observedContext = prepared.llmContext;
+				expect(prepared.agentContext.messages).toEqual([expect.objectContaining({ content: "original" })]);
+				expect(prepared.agentContext.messages).not.toBe(transformed);
+				expect(prepared.agentContext.tools).not.toBe(tools);
+				expect(prepared.llmContext.messages).toEqual(transformed);
+				expect(prepared.reasoning).toBe("high");
+				expect(prepared.desiredOutputCap).toBe(321);
+				expect(prepared.replacementCount).toBe(0);
+				return { action: "send" };
+			},
+			getApiKey: () => {
+				order.push("auth");
+				return "fresh-key";
+			},
+		};
+
+		const stream = agentLoop(
+			[createUserMessage("original")],
+			{ systemPrompt: "system", messages: [], tools },
+			config,
+			undefined,
+			(_model, context, options) => {
+				order.push("dispatch");
+				expect(context).toBe(observedContext);
+				expect(options?.apiKey).toBe("fresh-key");
+				return createCompletedStream();
+			},
+		);
+
+		await stream.result();
+		expect(order).toEqual(["transform", "convert", "beforeInference", "auth", "dispatch"]);
+	});
+
+	it("prepares one replacement in the same turn and rejects another", async () => {
+		const replacementMessage = createUserMessage("checkpoint");
+		const transformedReplacement = createUserMessage("transformed checkpoint");
+		const replacementCounts: number[] = [];
+		let transformCalls = 0;
+		let authCalls = 0;
+		let dispatchCalls = 0;
+		const events: AgentEvent[] = [];
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			transformContext: async (messages) => {
+				transformCalls++;
+				return messages.includes(replacementMessage) ? [transformedReplacement] : messages;
+			},
+			convertToLlm: identityConverter,
+			beforeInference: (prepared) => {
+				replacementCounts.push(prepared.replacementCount);
+				if (prepared.replacementCount === 0) {
+					return {
+						action: "replace",
+						context: { systemPrompt: "replacement", messages: [replacementMessage], tools: [] },
+					};
+				}
+				expect(prepared.agentContext.messages).toEqual([replacementMessage]);
+				expect(prepared.llmContext.messages).toEqual([transformedReplacement]);
+				return { action: "replace", context: prepared.agentContext };
+			},
+			getApiKey: () => {
+				authCalls++;
+				return "unused";
+			},
+		};
+
+		const stream = agentLoop(
+			[createUserMessage("original")],
+			{ systemPrompt: "original", messages: [], tools: [] },
+			config,
+			undefined,
+			() => {
+				dispatchCalls++;
+				return createCompletedStream();
+			},
+		);
+		for await (const event of stream) events.push(event);
+
+		const messages = await stream.result();
+		const lastMessage = messages[messages.length - 1];
+		expect(lastMessage.role === "assistant" ? lastMessage.errorMessage : undefined).toContain("at most once");
+		expect(replacementCounts).toEqual([0, 1]);
+		expect(transformCalls).toBe(2);
+		expect(authCalls).toBe(0);
+		expect(dispatchCalls).toBe(0);
+		expect(events.filter((event) => event.type === "turn_start")).toHaveLength(1);
+	});
+
+	it("stops before auth and dispatch when the hook rejects the request", async () => {
+		let authCalls = 0;
+		let dispatchCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("original")],
+			{ systemPrompt: "", messages: [], tools: [] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				beforeInference: () => ({ action: "stop", errorMessage: "checkpoint failed" }),
+				getApiKey: () => {
+					authCalls++;
+					return "unused";
+				},
+			},
+			undefined,
+			() => {
+				dispatchCalls++;
+				return createCompletedStream();
+			},
+		);
+
+		const messages = await stream.result();
+		const lastMessage = messages[messages.length - 1];
+		expect(lastMessage.role === "assistant" ? lastMessage.errorMessage : undefined).toBe("checkpoint failed");
+		expect(authCalls).toBe(0);
+		expect(dispatchCalls).toBe(0);
+	});
+
+	it("does no inference preparation when already aborted", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		let transformCalls = 0;
+		let hookCalls = 0;
+		let authCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("original")],
+			{ systemPrompt: "", messages: [], tools: [] },
+			{
+				model: createModel(),
+				transformContext: async (messages) => {
+					transformCalls++;
+					return messages;
+				},
+				convertToLlm: identityConverter,
+				beforeInference: () => {
+					hookCalls++;
+					return { action: "send" };
+				},
+				getApiKey: () => {
+					authCalls++;
+					return "unused";
+				},
+			},
+			controller.signal,
+			() => {
+				throw new Error("Unexpected stream call");
+			},
+		);
+
+		const messages = await stream.result();
+		const lastMessage = messages[messages.length - 1];
+		expect(lastMessage.role === "assistant" ? lastMessage.stopReason : undefined).toBe("aborted");
+		expect({ transformCalls, hookCalls, authCalls }).toEqual({ transformCalls: 0, hookCalls: 0, authCalls: 0 });
+	});
+
+	it("does not prepare a requested replacement after the first hook aborts", async () => {
+		const controller = new AbortController();
+		let transformCalls = 0;
+		let hookCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("original")],
+			{ systemPrompt: "", messages: [], tools: [] },
+			{
+				model: createModel(),
+				transformContext: async (messages) => {
+					transformCalls++;
+					return messages;
+				},
+				convertToLlm: identityConverter,
+				beforeInference: () => {
+					hookCalls++;
+					controller.abort();
+					return {
+						action: "replace",
+						context: { systemPrompt: "unused", messages: [], tools: [] },
+					};
+				},
+			},
+			controller.signal,
+			() => {
+				throw new Error("Unexpected stream call");
+			},
+		);
+
+		await stream.result();
+		expect(transformCalls).toBe(1);
+		expect(hookCalls).toBe(1);
 	});
 
 	it("should handle tool calls and results", async () => {

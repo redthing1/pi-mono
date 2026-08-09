@@ -19,6 +19,8 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	BeforeInferenceContext,
+	BeforeInferenceResult,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
 	PrepareNextTurnContext,
@@ -101,6 +103,10 @@ export interface AgentOptions {
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 	streamFn: StreamFn;
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+	beforeInference?: (
+		context: BeforeInferenceContext,
+		signal?: AbortSignal,
+	) => BeforeInferenceResult | undefined | Promise<BeforeInferenceResult | undefined>;
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
@@ -189,6 +195,10 @@ export class Agent {
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 	public streamFunction: StreamFn;
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+	public beforeInference?: (
+		context: BeforeInferenceContext,
+		signal?: AbortSignal,
+	) => BeforeInferenceResult | undefined | Promise<BeforeInferenceResult | undefined>;
 	public onPayload?: SimpleStreamOptions["onPayload"];
 	public onResponse?: SimpleStreamOptions["onResponse"];
 	public beforeToolCall?: (
@@ -230,6 +240,7 @@ export class Agent {
 		this.transformContext = runtimeOptions.transformContext;
 		this.streamFunction = runtimeOptions.streamFn ?? getDefaultStreamFn();
 		this.getApiKey = runtimeOptions.getApiKey;
+		this.beforeInference = runtimeOptions.beforeInference;
 		this.onPayload = runtimeOptions.onPayload;
 		this.onResponse = runtimeOptions.onResponse;
 		this.beforeToolCall = runtimeOptions.beforeToolCall;
@@ -455,6 +466,7 @@ export class Agent {
 	private createLoopConfig(options: { skipInitialSteeringPoll?: boolean } = {}): AgentLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		const shouldStopAfterTurn = this.shouldStopAfterTurn;
+		const beforeInference = this.beforeInference;
 		return {
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
@@ -482,6 +494,17 @@ export class Agent {
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
+			beforeInference: beforeInference
+				? async (context) => {
+						const result = await beforeInference(context, this.signal);
+						if (context.replacementCount === 1 && (!result || result.action === "send")) {
+							this._state.systemPrompt = context.agentContext.systemPrompt;
+							this._state.messages = context.agentContext.messages;
+							this._state.tools = context.agentContext.tools ?? [];
+						}
+						return result;
+					}
+				: undefined,
 			getSteeringMessages: async () => {
 				if (skipInitialSteeringPoll) {
 					skipInitialSteeringPoll = false;

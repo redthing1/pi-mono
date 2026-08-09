@@ -6,6 +6,7 @@ import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Context, Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createExtensionRuntime, discoverAndLoadExtensions, loadExtensions } from "../src/core/extensions/loader.ts";
@@ -15,11 +16,14 @@ import type {
 	ExtensionContextActions,
 	ExtensionUIContext,
 	ProviderConfig,
+	SessionBeforeCompactEvent,
+	SessionCompactionCheckEvent,
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { createTestExtensionsResult } from "./utilities.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -101,6 +105,249 @@ describe("ExtensionRunner", () => {
 		getSystemPrompt: () => "",
 		getScopedModels: () => [],
 	};
+
+	function getCompactionCheckModel(): Model<any> {
+		modelRegistry.registerProvider("instant-provider", providerModelConfig);
+		const model = modelRegistry.find("instant-provider", "instant-model");
+		if (!model) throw new Error("Expected compaction-check test model");
+		return model;
+	}
+
+	function createCompactionCheckEvent(context: Context): SessionCompactionCheckEvent {
+		return {
+			type: "session_compaction_check",
+			context,
+			model: getCompactionCheckModel(),
+			desiredOutputCap: 4096,
+			signal: new AbortController().signal,
+		};
+	}
+
+	function createBeforeCompactEvent(): SessionBeforeCompactEvent {
+		return {
+			type: "session_before_compact",
+			preparation: {
+				firstKeptEntryId: "kept-entry",
+				messagesToSummarize: [],
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore: 100,
+				fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+				settings: { enabled: true, reserveTokens: 10, keepRecentTokens: 20 },
+			},
+			branchEntries: [],
+			reason: "threshold",
+			willRetry: false,
+			signal: new AbortController().signal,
+		};
+	}
+
+	describe("compaction first-claim events", () => {
+		it.each(["compact", "send"] as const)(
+			"lets observers and errors fall through before the first %s admission claim",
+			async (action) => {
+				const calls: string[] = [];
+				const loaded = await createTestExtensionsResult(
+					[
+						{
+							path: "observer",
+							factory: (pi) => {
+								pi.on("session_compaction_check", () => {
+									calls.push("observer");
+								});
+							},
+						},
+						{
+							path: "throwing",
+							factory: (pi) => {
+								pi.on("session_compaction_check", () => {
+									calls.push("throwing");
+									throw new Error("admission failed");
+								});
+							},
+						},
+						{
+							path: "claimant",
+							factory: (pi) => {
+								pi.on("session_compaction_check", () => {
+									calls.push("claimant");
+									return { action };
+								});
+							},
+						},
+						{
+							path: "later",
+							factory: (pi) => {
+								pi.on("session_compaction_check", () => {
+									calls.push("later");
+									return { action: action === "compact" ? "send" : "compact" };
+								});
+							},
+						},
+					],
+					tempDir,
+				);
+				const runner = new ExtensionRunner(
+					loaded.extensions,
+					loaded.runtime,
+					tempDir,
+					sessionManager,
+					modelRegistry,
+				);
+				const errors: string[] = [];
+				runner.onError((error) => errors.push(error.error));
+				const context: Context = {
+					systemPrompt: "system",
+					messages: [{ role: "user", content: "hello", timestamp: 1 }],
+				};
+
+				await expect(runner.emitSessionCompactionCheck(createCompactionCheckEvent(context))).resolves.toEqual({
+					action,
+				});
+				expect(calls).toEqual(["observer", "throwing", "claimant"]);
+				expect(errors).toEqual(["admission failed"]);
+			},
+		);
+
+		it("passes a defensive provider-neutral context snapshot", async () => {
+			let observed: SessionCompactionCheckEvent | undefined;
+			const loaded = await createTestExtensionsResult(
+				[
+					{
+						path: "observer",
+						factory: (pi) => {
+							pi.on("session_compaction_check", (event) => {
+								observed = event;
+							});
+						},
+					},
+				],
+				tempDir,
+			);
+			const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, tempDir, sessionManager, modelRegistry);
+			const context: Context = {
+				systemPrompt: "system",
+				messages: [{ role: "user", content: "hello", timestamp: 1 }],
+				tools: [],
+			};
+			const event = createCompactionCheckEvent(context);
+
+			await expect(runner.emitSessionCompactionCheck(event)).resolves.toBeUndefined();
+			expect(observed).toMatchObject({
+				type: "session_compaction_check",
+				desiredOutputCap: 4096,
+			});
+			expect(observed?.context).not.toBe(context);
+			expect(observed?.context.messages).not.toBe(context.messages);
+			expect(observed?.context.messages[0]).toBe(context.messages[0]);
+			expect(observed?.context.tools).not.toBe(context.tools);
+			expect(observed?.model).toBe(event.model);
+			expect(observed?.signal).toBe(event.signal);
+		});
+
+		it("lets observers and errors precede the first custom compaction", async () => {
+			const calls: string[] = [];
+			const compaction = {
+				summary: "checkpoint",
+				firstKeptEntryId: "kept-entry",
+				tokensBefore: 100,
+			};
+			const loaded = await createTestExtensionsResult(
+				[
+					{
+						path: "observer",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("observer");
+								return {};
+							});
+						},
+					},
+					{
+						path: "incomplete",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("incomplete");
+								return { compaction: {} as never };
+							});
+						},
+					},
+					{
+						path: "throwing",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("throwing");
+								throw new Error("producer failed");
+							});
+						},
+					},
+					{
+						path: "producer",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("producer");
+								return { compaction };
+							});
+						},
+					},
+					{
+						path: "later",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("later");
+								return { cancel: true };
+							});
+						},
+					},
+				],
+				tempDir,
+			);
+			const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+
+			await expect(runner.emit(createBeforeCompactEvent())).resolves.toEqual({ compaction });
+			expect(calls).toEqual(["observer", "incomplete", "throwing", "producer"]);
+			expect(errors).toEqual(["producer failed"]);
+		});
+
+		it("stops session_before_compact dispatch at the first cancellation", async () => {
+			const calls: string[] = [];
+			const loaded = await createTestExtensionsResult(
+				[
+					{
+						path: "canceller",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("canceller");
+								return { cancel: true };
+							});
+						},
+					},
+					{
+						path: "later",
+						factory: (pi) => {
+							pi.on("session_before_compact", () => {
+								calls.push("later");
+								return {
+									compaction: {
+										summary: "too late",
+										firstKeptEntryId: "kept-entry",
+										tokensBefore: 100,
+									},
+								};
+							});
+						},
+					},
+				],
+				tempDir,
+			);
+			const runner = new ExtensionRunner(loaded.extensions, loaded.runtime, tempDir, sessionManager, modelRegistry);
+
+			await expect(runner.emit(createBeforeCompactEvent())).resolves.toEqual({ cancel: true });
+			expect(calls).toEqual(["canceller"]);
+		});
+	});
 
 	describe("scopedModels", () => {
 		it("reflects the getScopedModels context action on ctx.scopedModels", async () => {

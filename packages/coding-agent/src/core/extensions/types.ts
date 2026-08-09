@@ -605,6 +605,17 @@ export interface SessionBeforeForkEvent {
 	position: "before" | "at";
 }
 
+/** Fired before automatic compaction admission at an inference boundary. */
+export interface SessionCompactionCheckEvent {
+	readonly type: "session_compaction_check";
+	/** Defensive snapshot of the exact provider-neutral context prepared for this inference. */
+	readonly context: Readonly<Context>;
+	readonly model: Model<any>;
+	/** Requested output allowance before provider-specific clamping. */
+	readonly desiredOutputCap: number;
+	readonly signal: AbortSignal;
+}
+
 /** Fired before context compaction (can be cancelled or customized) */
 export interface SessionBeforeCompactEvent {
 	type: "session_before_compact";
@@ -673,6 +684,7 @@ export type SessionEvent =
 	| SessionInfoChangedEvent
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
+	| SessionCompactionCheckEvent
 	| SessionBeforeCompactEvent
 	| SessionCompactEvent
 	| SessionShutdownEvent
@@ -1162,6 +1174,8 @@ export interface SessionBeforeCompactResult {
 	compaction?: CompactionResult;
 }
 
+export type SessionCompactionCheckResult = { action: "compact" } | { action: "send" };
+
 export interface SessionBeforeTreeResult {
 	cancel?: boolean;
 	summary?: {
@@ -1252,6 +1266,10 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
 	): void;
 	on(event: "session_before_fork", handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>): void;
+	on(
+		event: "session_compaction_check",
+		handler: ExtensionHandler<SessionCompactionCheckEvent, SessionCompactionCheckResult>,
+	): void;
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,

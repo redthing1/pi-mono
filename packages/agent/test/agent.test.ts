@@ -732,6 +732,90 @@ describe("Agent", () => {
 		expect(sawAbortSignal).toBe(true);
 	});
 
+	it("adopts an accepted raw replacement before dispatch", async () => {
+		const replacementMessage = { role: "user" as const, content: "checkpoint", timestamp: Date.now() };
+		let transformCalls = 0;
+		let agent: Agent;
+		agent = new Agent({
+			initialState: { systemPrompt: "original" },
+			transformContext: async (messages) => {
+				transformCalls++;
+				return messages.map((message) =>
+					message === replacementMessage
+						? { role: "user" as const, content: "transformed checkpoint", timestamp: message.timestamp }
+						: message,
+				);
+			},
+			beforeInference: (prepared) => {
+				if (prepared.replacementCount === 0) {
+					return {
+						action: "replace",
+						context: { systemPrompt: "replacement", messages: [replacementMessage], tools: [] },
+					};
+				}
+				expect(agent.state.systemPrompt).toBe("original");
+				expect(agent.state.messages.some((message) => message === replacementMessage)).toBe(false);
+				return { action: "send" };
+			},
+			streamFn: (_model, context) => {
+				expect(agent.state.systemPrompt).toBe("replacement");
+				expect(agent.state.messages).toEqual([replacementMessage]);
+				expect(context.systemPrompt).toBe("replacement");
+				expect(context.messages).toEqual([
+					expect.objectContaining({ role: "user", content: "transformed checkpoint" }),
+				]);
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("original prompt");
+
+		expect(transformCalls).toBe(2);
+		expect(agent.state.systemPrompt).toBe("replacement");
+		expect(agent.state.messages).toEqual([replacementMessage, expect.objectContaining({ role: "assistant" })]);
+	});
+
+	it("keeps accepted replacement state when abort races with acceptance", async () => {
+		const replacementMessage = { role: "user" as const, content: "checkpoint", timestamp: Date.now() };
+		let authCalls = 0;
+		let dispatchCalls = 0;
+		let agent: Agent;
+		agent = new Agent({
+			initialState: { systemPrompt: "original" },
+			beforeInference: (prepared) => {
+				if (prepared.replacementCount === 0) {
+					return {
+						action: "replace",
+						context: { systemPrompt: "replacement", messages: [replacementMessage], tools: [] },
+					};
+				}
+				agent.abort();
+				return { action: "send" };
+			},
+			getApiKey: () => {
+				authCalls++;
+				return "unused";
+			},
+			streamFn: () => {
+				dispatchCalls++;
+				throw new Error("Unexpected stream call");
+			},
+		});
+
+		await agent.prompt("original prompt");
+
+		expect(agent.state.systemPrompt).toBe("replacement");
+		expect(agent.state.messages[0]).toBe(replacementMessage);
+		const lastMessage = agent.state.messages[agent.state.messages.length - 1];
+		expect(lastMessage.role === "assistant" ? lastMessage.stopReason : undefined).toBe("aborted");
+		expect(authCalls).toBe(0);
+		expect(dispatchCalls).toBe(0);
+	});
+
 	it("forwards shouldStopAfterTurn through AgentOptions", async () => {
 		const schema = Type.Object({});
 		const tool: AgentTool<typeof schema> = {

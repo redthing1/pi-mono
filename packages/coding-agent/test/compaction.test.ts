@@ -18,6 +18,7 @@ import {
 import {
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomEntry,
 	type CustomMessageEntry,
 	type ModelChangeEntry,
 	migrateSessionEntries,
@@ -145,6 +146,20 @@ function createCustomMessageEntry(content: string): CustomMessageEntry {
 		customType: "test",
 		content,
 		display: true,
+	};
+	lastId = id;
+	return entry;
+}
+
+function createCustomEntry(): CustomEntry {
+	const id = `test-id-${entryCounter++}`;
+	const entry: CustomEntry = {
+		type: "custom",
+		id,
+		parentId: lastId,
+		timestamp: new Date().toISOString(),
+		customType: "test-state",
+		data: { value: 1 },
 	};
 	lastId = id;
 	return entry;
@@ -372,6 +387,46 @@ describe("findCutPoint", () => {
 		expect(customFitsBudget.firstKeptEntryIndex).toBe(2);
 		expect(customFitsBudget.isSplitTurn).toBe(false);
 		expect(customFitsBudget.turnStartIndex).toBe(-1);
+	});
+
+	it("keeps the retained anchor on the context-visible cut point", () => {
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("x".repeat(100))),
+			createCustomEntry(),
+			createMessageEntry(createAssistantMessage("latest")),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 1);
+
+		expect(result.firstKeptEntryIndex).toBe(2);
+		expect(entries[result.firstKeptEntryIndex].type).toBe("message");
+		expect(result.isSplitTurn).toBe(true);
+		expect(result.turnStartIndex).toBe(0);
+	});
+
+	it("keeps an assistant tool call with trailing tool results", () => {
+		const toolCall = createAssistantMessage("");
+		toolCall.content = [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "large.txt" } }];
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("old turn")),
+			createMessageEntry(createAssistantMessage("old response")),
+			createMessageEntry(createUserMessage("read the file")),
+			createMessageEntry(toolCall),
+			createMessageEntry({
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: "x".repeat(4000) }],
+				isError: false,
+				timestamp: Date.now(),
+			}),
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 1);
+
+		expect(result.firstKeptEntryIndex).toBe(3);
+		expect(result.isSplitTurn).toBe(true);
+		expect(result.turnStartIndex).toBe(2);
 	});
 });
 

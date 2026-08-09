@@ -71,7 +71,8 @@ export interface ModelChangeEntry extends SessionEntryBase {
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	type: "compaction";
 	summary: string;
-	firstKeptEntryId: string;
+	/** First retained pre-checkpoint entry, or null when the checkpoint replaces the whole prior context. */
+	firstKeptEntryId: string | null;
 	tokensBefore: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
@@ -171,6 +172,21 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
+}
+
+/** Run-local, side-effect-free preview of an exact compaction entry and its projected context. */
+export interface CompactionCandidate<T = unknown> {
+	readonly entry: CompactionEntry<T>;
+	readonly context: SessionContext;
+	readonly sessionId: string;
+}
+
+/** Persistence failed before in-memory session state could advance; the durable tail may be partial. */
+export class SessionPersistenceError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "SessionPersistenceError";
+	}
 }
 
 export interface SessionInfo {
@@ -414,8 +430,8 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
  *
  * This follows the current leaf path. If the path contains compaction entries,
  * the latest compaction is represented by the compaction entry itself, followed
- * by the kept entries starting at firstKeptEntryId and all entries after the
- * compaction entry. Older summarized entries are omitted.
+ * by the kept non-compaction entries starting at firstKeptEntryId and all entries
+ * after the compaction entry. Older summaries and summarized entries are omitted.
  */
 export function buildContextEntries(
 	entries: SessionEntry[],
@@ -441,14 +457,16 @@ export function buildContextEntries(
 	}
 
 	const contextEntries: SessionEntry[] = [compaction];
-	let foundFirstKept = false;
-	for (let i = 0; i < compactionIdx; i++) {
-		const entry = path[i];
-		if (entry.id === compaction.firstKeptEntryId) {
-			foundFirstKept = true;
-		}
-		if (foundFirstKept) {
-			contextEntries.push(entry);
+	if (compaction.firstKeptEntryId !== null) {
+		let foundFirstKept = false;
+		for (let i = 0; i < compactionIdx; i++) {
+			const entry = path[i];
+			if (entry.id === compaction.firstKeptEntryId) {
+				foundFirstKept = true;
+			}
+			if (foundFirstKept && entry.type !== "compaction") {
+				contextEntries.push(entry);
+			}
 		}
 	}
 	contextEntries.push(...path.slice(compactionIdx + 1));
@@ -1044,10 +1062,10 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	_persist(entry: SessionEntry): void {
+	_persist(entry: SessionEntry, entries: readonly FileEntry[] = this.fileEntries): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
+		const hasAssistant = entries.some((e) => e.type === "message" && e.message.role === "assistant");
 		if (!hasAssistant) {
 			if (this.flushed) {
 				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
@@ -1061,7 +1079,7 @@ export class SessionManager {
 		if (!this.flushed) {
 			const fd = openSync(this.sessionFile, "wx");
 			try {
-				for (const e of this.fileEntries) {
+				for (const e of entries) {
 					writeFileSync(fd, `${JSON.stringify(e)}\n`);
 				}
 			} finally {
@@ -1074,10 +1092,16 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		if (this.persist && this.sessionFile) {
+			try {
+				this._persist(entry, [...this.fileEntries, entry]);
+			} catch (cause) {
+				throw new SessionPersistenceError(`Failed to persist session entry ${entry.id}`, { cause });
+			}
+		}
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._persist(entry);
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1125,15 +1149,17 @@ export class SessionManager {
 		return entry.id;
 	}
 
-	/** Append a compaction summary as child of current leaf, then advance leaf. Returns entry id. */
-	appendCompaction<T = unknown>(
+	/** Create an immutable compaction candidate without changing session state. */
+	createCompactionCandidate<T = unknown>(
 		summary: string,
-		firstKeptEntryId: string,
+		firstKeptEntryId: string | null,
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
-	): string {
+	): CompactionCandidate<T> {
+		if (firstKeptEntryId !== null) this._assertValidCompactionAnchor(firstKeptEntryId);
+
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
@@ -1146,8 +1172,67 @@ export class SessionManager {
 			usage,
 			fromHook,
 		};
-		this._appendEntry(entry);
-		return entry.id;
+		Object.freeze(entry);
+		const context = buildSessionContext([...this.getEntries(), entry], entry.id);
+		Object.freeze(context.messages);
+		Object.freeze(context);
+		return Object.freeze({ entry, context, sessionId: this.sessionId });
+	}
+
+	/** Commit the exact candidate if its session, frontier, id, and retained anchor are still valid. */
+	commitCompactionCandidate<T = unknown>(candidate: CompactionCandidate<T>): string {
+		if (candidate.sessionId !== this.sessionId) {
+			throw new Error("Compaction candidate belongs to a different session");
+		}
+		if (candidate.entry.parentId !== this.leafId) {
+			throw new Error("Compaction candidate frontier is no longer the current session leaf");
+		}
+		if (this.byId.has(candidate.entry.id)) {
+			throw new Error(`Compaction candidate entry id ${candidate.entry.id} is already in use`);
+		}
+		if (candidate.entry.firstKeptEntryId !== null) {
+			this._assertValidCompactionAnchor(candidate.entry.firstKeptEntryId);
+		}
+		this._appendEntry(candidate.entry);
+		return candidate.entry.id;
+	}
+
+	/** Append a compaction summary as child of current leaf, then advance leaf. Returns entry id. */
+	appendCompaction<T = unknown>(
+		summary: string,
+		firstKeptEntryId: string | null,
+		tokensBefore: number,
+		details?: T,
+		fromHook?: boolean,
+		usage?: Usage,
+	): string {
+		const candidate = this.createCompactionCandidate(
+			summary,
+			firstKeptEntryId,
+			tokensBefore,
+			details,
+			fromHook,
+			usage,
+		);
+		return this.commitCompactionCandidate(candidate);
+	}
+
+	private _assertValidCompactionAnchor(firstKeptEntryId: string): void {
+		const entry = this.buildContextEntries().find((candidate) => candidate.id === firstKeptEntryId);
+		if (!entry) {
+			throw new Error(
+				`Compaction first kept entry ${firstKeptEntryId} is not in the effective context on the current branch`,
+			);
+		}
+		if (
+			entry.type === "compaction" ||
+			(entry.type === "message" && entry.message.role === "toolResult") ||
+			sessionEntryToContextMessages(entry).length === 0
+		) {
+			throw new Error(
+				`Compaction first kept entry ${firstKeptEntryId} must be a stable context-visible non-compaction entry`,
+			);
+		}
 	}
 
 	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */

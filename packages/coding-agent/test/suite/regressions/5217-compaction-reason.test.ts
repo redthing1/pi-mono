@@ -4,8 +4,12 @@ import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 type SessionWithCompactionInternals = {
-	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+	_runOverflowCompaction: () => Promise<boolean>;
 };
+
+interface AdmissionControl {
+	compact: boolean;
+}
 
 interface RecordedCompactionEvent {
 	type: "session_before_compact" | "session_compact";
@@ -13,8 +17,9 @@ interface RecordedCompactionEvent {
 	willRetry: boolean;
 }
 
-function recordingExtension(recorded: RecordedCompactionEvent[]): ExtensionFactory {
+function recordingExtension(recorded: RecordedCompactionEvent[], admission: AdmissionControl): ExtensionFactory {
 	return (pi) => {
+		pi.on("session_compaction_check", () => ({ action: admission.compact ? "compact" : "send" }));
 		pi.on("session_before_compact", async (event) => {
 			recorded.push({ type: event.type, reason: event.reason, willRetry: event.willRetry });
 			return {
@@ -32,15 +37,18 @@ function recordingExtension(recorded: RecordedCompactionEvent[]): ExtensionFacto
 	};
 }
 
-async function createCompactionHarness(recorded: RecordedCompactionEvent[]): Promise<Harness> {
+async function createCompactionHarness(
+	recorded: RecordedCompactionEvent[],
+): Promise<{ harness: Harness; admission: AdmissionControl }> {
+	const admission = { compact: false };
 	const harness = await createHarness({
 		settings: { compaction: { keepRecentTokens: 1 } },
-		extensionFactories: [recordingExtension(recorded)],
+		extensionFactories: [recordingExtension(recorded, admission)],
 	});
 	harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
 	await harness.session.prompt("first");
 	await harness.session.prompt("second");
-	return harness;
+	return { harness, admission };
 }
 
 describe("issue #5217 compaction reason on extension events", () => {
@@ -54,7 +62,7 @@ describe("issue #5217 compaction reason on extension events", () => {
 
 	it("reports manual reason for compact()", async () => {
 		const recorded: RecordedCompactionEvent[] = [];
-		const harness = await createCompactionHarness(recorded);
+		const { harness } = await createCompactionHarness(recorded);
 		harnesses.push(harness);
 
 		await harness.session.compact();
@@ -67,11 +75,12 @@ describe("issue #5217 compaction reason on extension events", () => {
 
 	it("reports threshold reason for auto-compaction", async () => {
 		const recorded: RecordedCompactionEvent[] = [];
-		const harness = await createCompactionHarness(recorded);
+		const { harness, admission } = await createCompactionHarness(recorded);
 		harnesses.push(harness);
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		admission.compact = true;
+		harness.appendResponses([fauxAssistantMessage("three")]);
 
-		await sessionInternals._runAutoCompaction("threshold", false);
+		await harness.session.prompt("third");
 
 		expect(recorded).toEqual([
 			{ type: "session_before_compact", reason: "threshold", willRetry: false },
@@ -81,11 +90,11 @@ describe("issue #5217 compaction reason on extension events", () => {
 
 	it("reports overflow reason and willRetry for overflow recovery", async () => {
 		const recorded: RecordedCompactionEvent[] = [];
-		const harness = await createCompactionHarness(recorded);
+		const { harness } = await createCompactionHarness(recorded);
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
-		await sessionInternals._runAutoCompaction("overflow", true);
+		await sessionInternals._runOverflowCompaction();
 
 		expect(recorded).toEqual([
 			{ type: "session_before_compact", reason: "overflow", willRetry: true },

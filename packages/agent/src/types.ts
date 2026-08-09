@@ -139,6 +139,28 @@ export interface AgentLoopTurnUpdate {
 	thinkingLevel?: ThinkingLevel;
 }
 
+/** Provider-neutral request state prepared immediately before provider dispatch. */
+export interface BeforeInferenceContext {
+	/** Top-level copy of the raw loop context before `transformContext` and `convertToLlm`. Do not mutate it. */
+	readonly agentContext: AgentContext;
+	/** Exact transformed LLM context dispatched when this request is accepted. Do not mutate it. */
+	readonly llmContext: Context;
+	/** Model selected for this request. */
+	readonly model: Model<any>;
+	/** Reasoning level selected for this request. */
+	readonly reasoning: ThinkingLevel | undefined;
+	/** Requested output allowance before provider-specific clamping. */
+	readonly desiredOutputCap: number;
+	/** Zero for the original context and one for the only allowed replacement. */
+	readonly replacementCount: 0 | 1;
+}
+
+/** Decision returned by `beforeInference`. */
+export type BeforeInferenceResult =
+	| { action: "send" }
+	| { action: "replace"; context: AgentContext }
+	| { action: "stop"; errorMessage: string };
+
 export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
@@ -203,6 +225,22 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Contract: must not throw or reject. Return undefined when no key is available.
 	 */
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+
+	/**
+	 * Called after context transformation and LLM conversion, immediately before provider dispatch.
+	 *
+	 * Return `send` or undefined to dispatch the exact prepared request, `replace` to prepare one raw
+	 * replacement context in the same turn, or `stop` to end the run with a local error assistant
+	 * message. A replacement is transformed and converted once, then presented to this callback with
+	 * `replacementCount: 1`; a second replacement is rejected.
+	 *
+	 * Dynamic credentials are resolved only after the request is accepted. The callback receives the
+	 * run abort signal and must not throw, reject, or mutate either prepared context.
+	 */
+	beforeInference?: (
+		context: BeforeInferenceContext,
+		signal?: AbortSignal,
+	) => BeforeInferenceResult | undefined | Promise<BeforeInferenceResult | undefined>;
 
 	/**
 	 * Called after each turn fully completes and `turn_end` has been emitted.

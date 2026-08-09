@@ -207,6 +207,15 @@ const agent = new Agent({
   // Dynamic API key resolution (for expiring OAuth tokens)
   getApiKey: async (provider) => refreshToken(),
 
+  // Inspect the exact provider-bound context, replace the raw context once,
+  // or stop before credentials are resolved and the request is dispatched.
+  beforeInference: async ({ llmContext, replacementCount }, signal) => {
+    if (replacementCount === 0 && shouldReplaceContext(llmContext, signal)) {
+      return { action: "replace", context: buildReplacementContext() };
+    }
+    return { action: "send" };
+  },
+
   // Tool execution mode: "parallel" (default) or "sequential"
   toolExecution: "parallel",
 
@@ -241,6 +250,14 @@ const agent = new Agent({
   },
 });
 ```
+
+`beforeInference` runs after `transformContext` and `convertToLlm`. It receives the exact
+provider-neutral context that will be dispatched if accepted, plus a top-level copy of the raw
+`AgentContext`; neither may be mutated. Returning `replace` prepares one raw replacement through the
+normal transform and conversion pipeline and visits the hook once more with `replacementCount: 1`.
+That second visit is the acceptance point: `send` adopts the raw replacement into `Agent.state` before
+authentication and dispatch, while `stop` leaves the original state in place. A second replacement is
+rejected. Returning undefined is equivalent to `send`.
 
 ## Agent State
 
@@ -294,6 +311,7 @@ agent.state.model = getModel("openai", "gpt-4o");
 agent.state.thinkingLevel = "medium";
 agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
+agent.beforeInference = async ({ replacementCount }) => ({ action: "send" });
 agent.beforeToolCall = async ({ toolCall }) => undefined;
 agent.afterToolCall = async ({ toolCall, result }) => undefined;
 agent.shouldStopAfterTurn = async ({ context }) => shouldCompactBeforeNextTurn(context.messages);

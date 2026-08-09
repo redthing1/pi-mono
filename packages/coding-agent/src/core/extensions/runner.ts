@@ -60,6 +60,8 @@ import type {
 	SessionBeforeForkResult,
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeResult,
+	SessionCompactionCheckEvent,
+	SessionCompactionCheckResult,
 	SessionShutdownEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -139,6 +141,7 @@ type RunnerEmitEvent = Exclude<
 	| MessageEndEvent
 	| ResourcesDiscoverEvent
 	| InputEvent
+	| SessionCompactionCheckEvent
 >;
 
 type SessionBeforeEvent = Extract<
@@ -809,6 +812,43 @@ export class ExtensionRunner {
 		);
 	}
 
+	async emitSessionCompactionCheck(
+		event: SessionCompactionCheckEvent,
+	): Promise<SessionCompactionCheckResult | undefined> {
+		const ctx = this.createContext();
+		const snapshot: SessionCompactionCheckEvent = {
+			...event,
+			context: {
+				...event.context,
+				messages: [...event.context.messages],
+				tools: event.context.tools ? [...event.context.tools] : undefined,
+			},
+		};
+
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("session_compaction_check");
+			if (!handlers || handlers.length === 0) continue;
+
+			for (const handler of handlers) {
+				try {
+					const result = (await handler(snapshot, ctx)) as SessionCompactionCheckResult | undefined;
+					if (result?.action === "compact" || result?.action === "send") {
+						return result;
+					}
+				} catch (err) {
+					this.emitError({
+						extensionPath: ext.path,
+						event: snapshot.type,
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		}
+
+		return undefined;
+	}
+
 	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		const ctx = this.createContext();
 		let result: SessionBeforeEventResult | undefined;
@@ -820,6 +860,18 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const handlerResult = await handler(event, ctx);
+					if (event.type === "session_before_compact") {
+						const compactionResult = handlerResult as SessionBeforeCompactResult | undefined;
+						const compaction = compactionResult?.compaction;
+						const hasCompleteCompaction =
+							typeof compaction?.summary === "string" &&
+							(compaction.firstKeptEntryId === null || typeof compaction.firstKeptEntryId === "string") &&
+							typeof compaction.tokensBefore === "number";
+						if (compactionResult?.cancel === true || hasCompleteCompaction) {
+							return compactionResult as RunnerEmitResult<TEvent>;
+						}
+						continue;
+					}
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;

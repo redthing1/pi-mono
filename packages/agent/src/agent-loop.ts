@@ -19,6 +19,7 @@ import type {
 	AgentTool,
 	AgentToolCall,
 	AgentToolResult,
+	BeforeInferenceContext,
 	StreamFn,
 } from "./types.ts";
 
@@ -278,32 +279,122 @@ async function runLoop(
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
  */
-async function streamAssistantResponse(
+function copyAgentContext(context: AgentContext): AgentContext {
+	return {
+		systemPrompt: context.systemPrompt,
+		messages: context.messages.slice(),
+		tools: context.tools?.slice(),
+	};
+}
+
+async function prepareLlmContext(
 	context: AgentContext,
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-	streamFunction: StreamFn,
-): Promise<AssistantMessage> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+): Promise<Context> {
 	let messages = context.messages;
 	if (config.transformContext) {
 		messages = await config.transformContext(messages, signal);
 	}
 
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
-	const llmContext: Context = {
+	return {
 		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
+		messages: await config.convertToLlm(messages),
 		tools: context.tools,
 	};
+}
+
+async function prepareInference(
+	context: AgentContext,
+	agentContext: AgentContext,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	replacementCount: 0 | 1,
+): Promise<BeforeInferenceContext> {
+	return {
+		agentContext,
+		llmContext: await prepareLlmContext(context, config, signal),
+		model: config.model,
+		reasoning: config.reasoning,
+		desiredOutputCap: config.maxTokens ?? config.model.maxTokens,
+		replacementCount,
+	};
+}
+
+async function streamAssistantResponse(
+	initialContext: AgentContext,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+	streamFunction: StreamFn,
+): Promise<AssistantMessage> {
+	const context = initialContext;
+	if (signal?.aborted) {
+		return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+	}
+
+	let llmContext: Context;
+	if (config.beforeInference) {
+		let prepared = await prepareInference(context, copyAgentContext(context), config, signal, 0);
+		if (signal?.aborted) {
+			return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+		}
+
+		const firstDecision = (await config.beforeInference(prepared, signal)) ?? { action: "send" as const };
+		if (signal?.aborted) {
+			return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+		}
+
+		if (firstDecision.action === "stop") {
+			return stopPreparedInference(context, config.model, firstDecision.errorMessage, "error", emit);
+		}
+
+		if (firstDecision.action === "replace") {
+			const replacementContext = copyAgentContext(firstDecision.context);
+			prepared = await prepareInference(replacementContext, replacementContext, config, signal, 1);
+			if (signal?.aborted) {
+				return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+			}
+
+			const secondDecision = (await config.beforeInference(prepared, signal)) ?? { action: "send" as const };
+			if (secondDecision.action === "replace") {
+				return stopPreparedInference(
+					context,
+					config.model,
+					"beforeInference may replace a pending inference at most once",
+					"error",
+					emit,
+				);
+			}
+			if (secondDecision.action === "stop") {
+				return stopPreparedInference(context, config.model, secondDecision.errorMessage, "error", emit);
+			}
+
+			// The second-pass send is the acceptance point. Agent's wrapper adopts the
+			// same raw snapshot before this callback returns to the loop.
+			context.systemPrompt = replacementContext.systemPrompt;
+			context.messages = replacementContext.messages;
+			context.tools = replacementContext.tools;
+			if (signal?.aborted) {
+				return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+			}
+		}
+
+		llmContext = prepared.llmContext;
+	} else {
+		// Preserve the default path: no defensive raw-context snapshot without a hook.
+		llmContext = await prepareLlmContext(context, config, signal);
+		if (signal?.aborted) {
+			return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+		}
+	}
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+	if (signal?.aborted) {
+		return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+	}
 
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
@@ -369,6 +460,45 @@ async function streamAssistantResponse(
 	}
 	await emit({ type: "message_end", message: finalMessage });
 	return finalMessage;
+}
+
+function createStoppedInferenceMessage(
+	model: AgentLoopConfig["model"],
+	errorMessage: string,
+	stopReason: "error" | "aborted",
+): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: "" }],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		errorMessage,
+		timestamp: Date.now(),
+	};
+}
+
+async function stopPreparedInference(
+	context: AgentContext,
+	model: AgentLoopConfig["model"],
+	errorMessage: string,
+	stopReason: "error" | "aborted",
+	emit: AgentEventSink,
+): Promise<AssistantMessage> {
+	const message = createStoppedInferenceMessage(model, errorMessage, stopReason);
+	context.messages.push(message);
+	await emit({ type: "message_start", message: { ...message } });
+	await emit({ type: "message_end", message });
+	return message;
 }
 
 /**

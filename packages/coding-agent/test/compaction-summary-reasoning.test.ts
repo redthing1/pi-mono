@@ -171,6 +171,30 @@ describe("generateSummary reasoning options", () => {
 		]);
 	});
 
+	it("retains the previous checkpoint exactly once when split rollover has no new history", async () => {
+		const previousSummary = "Prior durable checkpoint";
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "kept-entry",
+			messagesToSummarize: [],
+			turnPrefixMessages: [{ role: "user", content: "Keep this prefix context.", timestamp: Date.now() }],
+			isSplitTurn: true,
+			tokensBefore: 1000,
+			previousSummary,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: {
+				enabled: true,
+				reserveTokens: 2000,
+				keepRecentTokens: 100,
+			},
+		};
+
+		const result = await compact(preparation, createModel(false), "test-key");
+
+		expect(result.summary.split(previousSummary)).toHaveLength(2);
+		expect(result.summary).not.toContain("No prior history.");
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",

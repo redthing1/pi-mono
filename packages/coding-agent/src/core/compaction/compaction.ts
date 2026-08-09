@@ -87,7 +87,7 @@ function getMessageFromEntryForCompaction(entry: SessionEntry): AgentMessage | u
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
 export interface CompactionResult<T = unknown> {
 	summary: string;
-	firstKeptEntryId: string;
+	firstKeptEntryId: string | null;
 	tokensBefore: number;
 	estimatedTokensAfter?: number;
 	/** Usage from the LLM call(s) that generated this summary, if available */
@@ -430,24 +430,21 @@ export function findCutPoint(
 		// Check if we've exceeded the budget
 		if (accumulatedTokens >= keepRecentTokens) {
 			// Find the closest valid cut point at or after this entry
+			let foundCutPoint = false;
 			for (let c = 0; c < cutPoints.length; c++) {
 				if (cutPoints[c] >= i) {
 					cutIndex = cutPoints[c];
+					foundCutPoint = true;
 					break;
 				}
 			}
+			// A trailing tool result has no valid cut point after it. Keep the
+			// preceding assistant tool call so the retained flow remains atomic.
+			if (!foundCutPoint) {
+				cutIndex = cutPoints[cutPoints.length - 1];
+			}
 			break;
 		}
-	}
-
-	// Scan backwards from cutIndex to include adjacent metadata entries that do not affect context.
-	while (cutIndex > startIndex) {
-		const prevEntry = entries[cutIndex - 1];
-		// Stop at compaction boundaries or context-visible entries.
-		if (prevEntry.type === "compaction" || sessionEntryToContextMessages(prevEntry).length > 0) {
-			break;
-		}
-		cutIndex--;
 	}
 
 	// Determine if this is a split turn
@@ -699,8 +696,8 @@ export async function generateSummaryWithUsage(
 // ============================================================================
 
 export interface CompactionPreparation {
-	/** UUID of first entry to keep */
-	firstKeptEntryId: string;
+	/** UUID of first entry to keep, or null when the checkpoint replaces the whole prior context. */
+	firstKeptEntryId: string | null;
 	/** Messages that will be summarized and discarded */
 	messagesToSummarize: AgentMessage[];
 	/** Messages that will be turned into turn prefix summary (if splitting) */
@@ -719,6 +716,7 @@ export interface CompactionPreparation {
 export function prepareCompaction(
 	pathEntries: SessionEntry[],
 	settings: CompactionSettings,
+	allowEmptyRetainedContext = false,
 ): CompactionPreparation | undefined {
 	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
 		return undefined;
@@ -751,7 +749,7 @@ export function prepareCompaction(
 	if (!firstKeptEntry?.id) {
 		return undefined; // Session needs migration
 	}
-	const firstKeptEntryId = firstKeptEntry.id;
+	let firstKeptEntryId: string | null = firstKeptEntry.id;
 
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
 
@@ -772,7 +770,13 @@ export function prepareCompaction(
 	}
 
 	if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0) {
-		return undefined;
+		if (!allowEmptyRetainedContext) return undefined;
+		for (let i = boundaryStart; i < boundaryEnd; i++) {
+			const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+			if (msg) messagesToSummarize.push(msg);
+		}
+		if (messagesToSummarize.length === 0) return undefined;
+		firstKeptEntryId = null;
 	}
 
 	// Extract file operations from messages and previous compaction
@@ -852,7 +856,7 @@ export async function compact(
 	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		let historyText = "No prior history.";
+		let historyText = previousSummary ?? "No prior history.";
 		let historyUsage: Usage | undefined;
 		if (messagesToSummarize.length > 0) {
 			const historyResult = await generateSummaryWithUsage(
@@ -913,10 +917,6 @@ export async function compact(
 	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
-
-	if (!firstKeptEntryId) {
-		throw new Error("First kept entry has no UUID - session may need migration");
-	}
 
 	return {
 		summary,
