@@ -119,6 +119,7 @@
 
 ### Fixed
 
+- Fixed reverse prompt search excluding prompts from inactive session branches.
 - Fixed native edit previews appearing only after tool arguments finished streaming, and improved their width-aware themed rendering.
 - Fixed explicitly provider-scoped startup waiting on unrelated dynamic providers instead of refreshing only the selected provider.
 - Fixed the footer showing `(sub)` for generic OAuth/OpenID sign-ins without a known subscription; extension OAuth providers can opt in with `isSubscription`.

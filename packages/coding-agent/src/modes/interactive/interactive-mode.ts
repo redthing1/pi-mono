@@ -3675,16 +3675,18 @@ export class InteractiveMode {
 	}
 
 	renderInitialMessages(): void {
+		const allEntries = this.sessionManager.getEntries();
 		this.defaultEditor.clearHistory();
+		for (const entry of allEntries) {
+			if (entry.type !== "message" || entry.message.role !== "user") continue;
+			const textContent = this.getUserMessageText(entry.message);
+			if (textContent) this.editor.addToHistory?.(textContent);
+		}
 		const entries = this.sessionManager.buildContextEntries();
-		this.renderSessionEntries(entries, {
-			updateFooter: true,
-			populateHistory: true,
-		});
+		this.renderSessionEntries(entries, { updateFooter: true });
 		this.renderProjectTrustWarningIfNeeded();
 
 		// Show compaction info if session was compacted
-		const allEntries = this.sessionManager.getEntries();
 		const compactionCount = allEntries.filter((e) => e.type === "compaction").length;
 		if (compactionCount > 0) {
 			const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
