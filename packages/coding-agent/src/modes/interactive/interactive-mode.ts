@@ -1052,15 +1052,15 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Update terminal title with session name and cwd.
+	 * Update terminal title with session name and active workspace identity.
 	 */
 	private updateTerminalTitle(): void {
-		const cwdBasename = path.basename(this.sessionManager.getCwd());
+		const workspaceLabel = this.extensionWorkspaceInfo?.label ?? path.basename(this.sessionManager.getCwd());
 		const sessionName = this.sessionManager.getSessionName();
 		if (sessionName) {
-			this.ui.terminal.setTitle(`${APP_TITLE} - ${sessionName} - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_TITLE} - ${sessionName} - ${workspaceLabel}`);
 		} else {
-			this.ui.terminal.setTitle(`${APP_TITLE} - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_TITLE} - ${workspaceLabel}`);
 		}
 	}
 
@@ -2247,6 +2247,7 @@ export class InteractiveMode {
 		this.setupAutocompleteProvider();
 		this.defaultEditor.onExtensionShortcut = undefined;
 		this.extensionWorkspaceInfo = undefined;
+		this.footer.setWorkspaceLabel(undefined);
 		this.updateTerminalTitle();
 		this.workingMessage = undefined;
 		this.workingVisible = true;
@@ -2430,6 +2431,8 @@ export class InteractiveMode {
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			setWorkspaceInfo: (info) => {
 				this.extensionWorkspaceInfo = info;
+				this.footer.setWorkspaceLabel(info?.label);
+				this.updateTerminalTitle();
 				this.ui.requestRender();
 			},
 			custom: (factory, options) => this.showExtensionCustom(factory, options),

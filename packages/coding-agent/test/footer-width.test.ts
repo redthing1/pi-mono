@@ -128,6 +128,14 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it("uses an extension workspace label without local git identity", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.setWorkspaceLabel("teleport-test:/workspace");
+
+		expect(stripAnsi(footer.render(120)[0])).toBe("teleport-test:/workspace");
+	});
+
 	it("keeps stats line within width for wide model and provider names", () => {
 		const width = 60;
 		const session = createSession({

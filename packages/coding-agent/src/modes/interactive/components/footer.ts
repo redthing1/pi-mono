@@ -52,6 +52,7 @@ export class FooterComponent implements Component {
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private historySearch: { query: string; noMatch: boolean } | undefined;
+	private workspaceLabel: string | undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -60,6 +61,10 @@ export class FooterComponent implements Component {
 
 	setSession(session: AgentSession): void {
 		this.session = session;
+	}
+
+	setWorkspaceLabel(label: string | undefined): void {
+		this.workspaceLabel = label;
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
@@ -132,11 +137,13 @@ export class FooterComponent implements Component {
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
-		// Replace home directory with ~
-		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
+		// Prefer extension workspace identity; otherwise abbreviate the local home directory.
+		let pwd =
+			this.workspaceLabel ??
+			formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
 		// Add git branch if available
-		const branch = this.footerData.getGitBranch();
+		const branch = this.workspaceLabel === undefined ? this.footerData.getGitBranch() : undefined;
 		if (branch) {
 			pwd = `${pwd} (${branch})`;
 		}
