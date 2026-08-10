@@ -212,6 +212,38 @@ Response:
 
 Messages are `AgentMessage` objects (see [Message Types](#message-types)).
 
+#### list_sessions
+
+List persisted sessions in the current runtime's working-directory session group.
+Full transcript search text is intentionally omitted. Session listing is disabled
+when client ZDR is active (`--zdr` or `--zdr-client`); server-only ZDR does not
+disable local session access.
+
+```json
+{"type":"list_sessions"}
+```
+
+Response:
+
+```json
+{
+  "type": "response",
+  "command": "list_sessions",
+  "success": true,
+  "data": {
+    "sessions": [{
+      "id": "abc123",
+      "path": "/path/to/session.jsonl",
+      "name": "Optional display name",
+      "created": "2026-08-10T12:00:00.000Z",
+      "modified": "2026-08-10T12:05:00.000Z",
+      "messageCount": 4,
+      "firstMessage": "First user prompt"
+    }]
+  }
+}
+```
+
 ### Model
 
 #### set_model

@@ -13,7 +13,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type { RpcCommand, RpcResponse, RpcSessionState, RpcSessionSummary, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -353,6 +353,14 @@ export class RpcClient {
 	async getSessionStats(): Promise<SessionStats> {
 		const response = await this.send({ type: "get_session_stats" });
 		return this.getData(response);
+	}
+
+	/**
+	 * List persisted sessions in the current runtime's session group.
+	 */
+	async listSessions(): Promise<RpcSessionSummary[]> {
+		const response = await this.send({ type: "list_sessions" });
+		return this.getData<{ sessions: RpcSessionSummary[] }>(response).sessions;
 	}
 
 	/**

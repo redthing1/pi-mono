@@ -29,6 +29,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { listRpcSessions } from "./rpc-sessions.ts";
 import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
@@ -45,6 +46,7 @@ export type {
 	RpcExtensionUIResponse,
 	RpcResponse,
 	RpcSessionState,
+	RpcSessionSummary,
 } from "./rpc-types.ts";
 
 /**
@@ -592,6 +594,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "get_session_stats": {
 				const stats = session.getSessionStats();
 				return success(id, "get_session_stats", stats);
+			}
+
+			case "list_sessions": {
+				const sessions = await listRpcSessions(session);
+				return success(id, "list_sessions", { sessions });
 			}
 
 			case "export_html": {
