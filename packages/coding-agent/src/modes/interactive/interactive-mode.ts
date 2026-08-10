@@ -2449,6 +2449,8 @@ export class InteractiveMode {
 				this.workingMessage = message;
 				if (this.activeStatusIndicator?.kind === "working") {
 					this.activeStatusIndicator.setMessage(message ?? this.defaultWorkingMessage);
+				} else if (this.activeStatusIndicator instanceof CompactionStatusIndicator) {
+					this.activeStatusIndicator.setDetail(message);
 				}
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),

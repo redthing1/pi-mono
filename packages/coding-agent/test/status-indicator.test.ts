@@ -1,7 +1,12 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { IdleStatus, RetryStatusIndicator } from "../src/modes/interactive/components/status-indicator.ts";
+import {
+	CompactionStatusIndicator,
+	IdleStatus,
+	RetryStatusIndicator,
+} from "../src/modes/interactive/components/status-indicator.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 describe("status indicators", () => {
 	afterEach(() => {
@@ -28,5 +33,21 @@ describe("status indicators", () => {
 		vi.advanceTimersByTime(2000);
 
 		expect(requestRender).toHaveBeenCalledTimes(callsBeforeDispose);
+	});
+
+	it("adds and clears compaction detail", () => {
+		initTheme("dark");
+		const tui = { requestRender: vi.fn() } as unknown as TUI;
+		const indicator = new CompactionStatusIndicator(tui, "manual");
+
+		indicator.setDetail("request progress");
+		const withDetail = stripAnsi(indicator.render(120).join("\n"));
+		expect(withDetail).toContain("Compacting context... request progress");
+
+		indicator.setDetail();
+		const withoutDetail = stripAnsi(indicator.render(120).join("\n"));
+		expect(withoutDetail).toContain("Compacting context...");
+		expect(withoutDetail).not.toContain("request progress");
+		indicator.dispose();
 	});
 });
