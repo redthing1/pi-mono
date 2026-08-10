@@ -214,6 +214,16 @@ describe("detectCapabilities", () => {
 	it("defaults to hyperlinks: false for unknown terminals", () => {
 		withEnv({}, () => {
 			const caps = detectCapabilities();
+			assert.strictEqual(caps.trueColor, false);
+			assert.strictEqual(caps.hyperlinks, false);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("enables truecolor when SSH preserves xterm-256color but drops COLORTERM", () => {
+		withEnv({ TERM: "xterm-256color" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.trueColor, true);
 			assert.strictEqual(caps.hyperlinks, false);
 			assert.strictEqual(caps.images, null);
 		});

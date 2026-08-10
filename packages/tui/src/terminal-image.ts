@@ -70,7 +70,8 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
 	const term = process.env.TERM?.toLowerCase() || "";
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
-	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
+	// SSH forwards TERM for interactive sessions but commonly drops COLORTERM.
+	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit" || term === "xterm-256color";
 	const isWindowsConsole = process.platform === "win32";
 
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
