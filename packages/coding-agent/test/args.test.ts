@@ -187,7 +187,7 @@ describe("parseArgs", () => {
 		});
 	});
 
-	describe("--no-session flag", () => {
+	describe("privacy flags", () => {
 		test("parses --no-session flag", () => {
 			const result = parseArgs(["--no-session"]);
 			expect(result.noSession).toBe(true);
@@ -202,6 +202,13 @@ describe("parseArgs", () => {
 		test("parses --zdr-client as local ephemeral mode", () => {
 			const result = parseArgs(["--zdr-client"]);
 			expect(result.noSession).toBe(true);
+			expect(result.zdr).toBeUndefined();
+		});
+
+		test("parses --zdr-server as remote-only mode", () => {
+			const result = parseArgs(["--zdr-server"]);
+			expect(result.zdrServer).toBe(true);
+			expect(result.noSession).toBeUndefined();
 			expect(result.zdr).toBeUndefined();
 		});
 	});

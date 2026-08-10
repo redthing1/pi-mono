@@ -569,7 +569,7 @@ function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | u
 function privacyModeFromArgs(parsed: Args): PrivacyMode {
 	return mergePrivacyMode({
 		clientZdr: parsed.noSession === true,
-		remoteZdr: parsed.zdr === true,
+		remoteZdr: parsed.zdr === true || parsed.zdrServer === true,
 	});
 }
 

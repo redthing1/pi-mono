@@ -5,6 +5,7 @@
 ### Added
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
+- Added `--zdr-server` to require server-ZDR-approved models while retaining normal local session persistence.
 
 ### Changed
 

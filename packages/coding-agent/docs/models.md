@@ -391,6 +391,8 @@ Behavior notes:
 
 `pi --zdr` combines local and remote controls: it keeps the session in memory, disables session export/import/switching, and permits provider requests only for models explicitly approved with `zdr: true`. If no approved model is available within the selected provider scope, pi fails instead of falling back to another provider.
 
+`pi --zdr-server` applies only the remote control: it keeps normal local session persistence while permitting provider requests only for explicitly approved models. This is useful when local history is desired but every remote request must use a server-ZDR-approved route.
+
 Set `zdr` on a provider to apply the approval to its configured models, or set it per model or in `modelOverrides` for finer control. An OpenRouter model with `compat.openRouterRouting.zdr: true` is also recognized as approved. This flag is an operator assertion; verify the provider policy and route before setting it.
 
 `pi --zdr-client` (and `--no-session`) applies only the local in-memory-session control. It does not assert or require a provider's remote retention policy.

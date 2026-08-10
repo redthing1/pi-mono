@@ -201,6 +201,7 @@ cat README.md | pi -p "Summarize this text"
 | `--fork <path\|id>` | Fork a session file or partial UUID into a new session |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--zdr` | Use an in-memory session and require a model explicitly approved for zero-data retention |
+| `--zdr-server` | Require a server-ZDR-approved model while keeping normal local session persistence |
 | `--no-session`, `--zdr-client` | Use an in-memory session without requiring remote ZDR approval |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
 

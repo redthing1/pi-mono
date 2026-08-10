@@ -25,6 +25,7 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	zdr?: boolean;
+	zdrServer?: boolean;
 	session?: string;
 	sessionId?: string;
 	fork?: string;
@@ -107,6 +108,8 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--zdr") {
 			result.noSession = true;
 			result.zdr = true;
+		} else if (arg === "--zdr-server") {
+			result.zdrServer = true;
 		} else if (arg === "--no-session" || arg === "--zdr-client") {
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
@@ -270,6 +273,7 @@ ${chalk.bold("Options:")}
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
   --zdr                          Zero-data-retention mode (ephemeral session; requires an approved model)
+  --zdr-server                   Require a server-ZDR-approved model; keep normal local persistence
   --no-session, --zdr-client     Don't save session locally (ephemeral)
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling

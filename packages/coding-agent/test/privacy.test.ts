@@ -126,4 +126,38 @@ describe("zero-data-retention mode", () => {
 			session.dispose();
 		}
 	});
+
+	it("enforces server ZDR while preserving the persistent session", async () => {
+		const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
+		const approved = modelRuntime.getModel("zdr-provider", "approved");
+		const notApproved = modelRuntime.getModel("zdr-provider", "not-approved");
+		expect(approved).toBeDefined();
+		expect(notApproved).toBeDefined();
+
+		await expect(
+			createAgentSession({
+				cwd,
+				agentDir,
+				modelRuntime,
+				model: notApproved,
+				privacy: { clientZdr: false, remoteZdr: true },
+			}),
+		).rejects.toThrow(ZDR_MODEL_REQUIRED_MESSAGE);
+
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			modelRuntime,
+			model: approved,
+			privacy: { clientZdr: false, remoteZdr: true },
+		});
+
+		try {
+			expect(session.sessionManager.isPersisted()).toBe(true);
+			expect(session.extensionRunner.createContext().privacy).toEqual({ clientZdr: false, remoteZdr: true });
+			await expect(session.setModel(notApproved!)).rejects.toThrow(ZDR_MODEL_REQUIRED_MESSAGE);
+		} finally {
+			session.dispose();
+		}
+	});
 });
