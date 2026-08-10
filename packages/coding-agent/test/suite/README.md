@@ -10,7 +10,7 @@ Rules:
 - Do not use or extend the legacy `test/test-harness.ts` path unless a missing capability forces it
 
 Organization:
-- Put broad lifecycle and characterization tests directly under `test/suite/`
-- Put issue-specific regression tests under `test/suite/regressions/`
-- Name regression tests as `<issue-number>-<short-slug>.test.ts`
+- Put broad lifecycle, characterization, and positive contract tests directly under `test/suite/`
+- Use `test/suite/regressions/` only when an issue-specific test is genuinely justified; do not create historical tombstones by default
+- Name justified regression tests as `<issue-number>-<short-slug>.test.ts`
 - Example: `test/suite/regressions/2023-queued-slash-command-followup.test.ts`

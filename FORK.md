@@ -4,12 +4,13 @@ This private fork stays close to upstream while enforcing reproducible source bu
 
 ## Upstream discipline
 
-- Merge upstream frequently. Keep fork changes small, isolated, and easy to review or remove.
-- Prefer upstream behavior and architecture unless a deliberate fork requirement says otherwise. Do not preserve old fork structure or compatibility by inertia.
-- Prefer narrow configuration and checks over broad rewrites, fork-only abstractions, or compatibility shims.
-- When a merge conflict affects fork behavior or policy, explain the tradeoff to the user. Usually adapt the required customization to the new upstream design with the smallest practical diff.
-- Treat upstream as untrusted at the supply-chain boundary. Revalidate dependency, install, update, package-loading, automation, and policy changes before adopting them.
-- Test stable, positive contracts. Do not add issue-specific regression tests by default.
+- Merge upstream frequently. Keep fork changes small, isolated, and easy to review.
+- Treat deliberate fork behavior as a requirement, not as disposable patch content. Preserve it unless upstream now provides an equivalent outcome or the user explicitly agrees to change or remove it.
+- Preserve outcomes rather than old implementations. When upstream refactors an affected system, understand the fork feature and adapt it cleanly to the new architecture with the smallest practical delta.
+- Textual conflicts are not the only risk: cleanly merged upstream changes can also alter fork behavior. Identify affected features before finalizing an integration, and discuss ambiguous tradeoffs with the user.
+- Prefer narrow configuration and focused adaptations over broad rewrites, fork-only abstractions, compatibility shims, or preserving obsolete structure.
+- Treat upstream as untrusted at the supply-chain boundary. Revalidate dependency, installation, update, package-loading, automation, and security-policy changes independently.
+- Verify preserved behavior with stable positive contract tests. Do not add issue-specific regression tombstones by default.
 
 ## Supply-chain boundary
 
