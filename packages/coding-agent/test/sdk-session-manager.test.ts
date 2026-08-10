@@ -5,6 +5,7 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 
 describe("createAgentSession session manager defaults", () => {
 	let tempDir: string;
@@ -62,6 +63,32 @@ describe("createAgentSession session manager defaults", () => {
 		expect(session.sessionManager.isPersisted()).toBe(false);
 
 		session.dispose();
+	});
+
+	it("prefers a user thinking default over the provider-advertised default", async () => {
+		const base = getModel("anthropic", "claude-sonnet-4-5");
+		expect(base).toBeTruthy();
+		const model = {
+			...base!,
+			reasoning: true,
+			defaultThinkingLevel: "max" as const,
+			thinkingLevelMap: { ...base!.thinkingLevelMap, max: "max" },
+		};
+
+		for (const testCase of [
+			{ settings: SettingsManager.inMemory(), expected: "max" },
+			{ settings: SettingsManager.inMemory({ defaultThinkingLevel: "high" }), expected: "high" },
+		]) {
+			const { session } = await createAgentSession({
+				cwd,
+				agentDir,
+				model,
+				sessionManager: SessionManager.inMemory(),
+				settingsManager: testCase.settings,
+			});
+			expect(session.thinkingLevel).toBe(testCase.expected);
+			session.dispose();
+		}
 	});
 
 	it("derives cwd from an explicit sessionManager when cwd is omitted", async () => {

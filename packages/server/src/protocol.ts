@@ -64,6 +64,7 @@ type _AiModelFieldsAccountedFor = Assert<
 		| "provider"
 		| "baseUrl"
 		| "reasoning"
+		| "defaultThinkingLevel"
 		| "thinkingLevelMap"
 		| "input"
 		| "cost"

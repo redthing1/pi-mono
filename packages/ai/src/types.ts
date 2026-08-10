@@ -804,6 +804,8 @@ export interface Model<TApi extends Api> {
 	provider: ProviderId;
 	baseUrl: string;
 	reasoning: boolean;
+	/** Provider-advertised default used when the user has not selected a thinking level. */
+	defaultThinkingLevel?: ModelThinkingLevel;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
 	 * Missing keys use provider defaults. null marks a level as unsupported.

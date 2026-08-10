@@ -60,6 +60,7 @@ export interface ProviderConfigInput {
 		baseUrl?: string;
 		zdr?: boolean;
 		reasoning: boolean;
+		defaultThinkingLevel?: Model<Api>["defaultThinkingLevel"];
 		thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 		input: ("text" | "image")[];
 		cost: Model<Api>["cost"];

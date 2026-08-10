@@ -1574,6 +1574,8 @@ export interface ProviderModelConfig {
 	zdr?: boolean;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
+	/** Provider-advertised default used when the user has not selected a thinking level. */
+	defaultThinkingLevel?: Model<Api>["defaultThinkingLevel"];
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 	/** Supported input types. */

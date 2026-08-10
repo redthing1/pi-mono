@@ -18,7 +18,7 @@ describe("AgentSession model and extension characterization", () => {
 		const modelEvents: string[] = [];
 		const harness = await createHarness({
 			models: [
-				{ id: "faux-1", name: "One", reasoning: true },
+				{ id: "faux-1", name: "One", reasoning: false },
 				{ id: "faux-2", name: "Two", reasoning: true },
 			],
 			extensionFactories: [
@@ -31,10 +31,13 @@ describe("AgentSession model and extension characterization", () => {
 		});
 		harnesses.push(harness);
 		const nextModel = harness.getModel("faux-2")!;
+		nextModel.defaultThinkingLevel = "max";
+		nextModel.thinkingLevelMap = { max: "max" };
 
 		await harness.session.setModel(nextModel);
 
 		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.session.thinkingLevel).toBe("max");
 		expect(modelEvents).toEqual(["faux-1->faux-2:set"]);
 		expect(
 			harness.sessionManager
