@@ -6,17 +6,18 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../core/session-manager.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import { SessionSelectorComponent } from "../modes/interactive/components/session-selector.ts";
+import { type SessionSelection, SessionSelectorComponent } from "../modes/interactive/components/session-selector.ts";
 import { createStartupTui, startStartupTui } from "./startup-ui.ts";
 
 type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[]>;
 
-/** Show TUI session selector and return selected session path or null if cancelled */
+/** Show TUI session selector and return the selected session or null if cancelled */
 export async function selectSession(
 	currentSessionsLoader: SessionsLoader,
 	allSessionsLoader: SessionsLoader,
 	settingsManager: SettingsManager,
-): Promise<string | null> {
+	currentCwd: string,
+): Promise<SessionSelection | null> {
 	const ui = await createStartupTui(settingsManager);
 	return new Promise((resolve) => {
 		const keybindings = KeybindingsManager.create();
@@ -26,11 +27,11 @@ export async function selectSession(
 		const selector = new SessionSelectorComponent(
 			currentSessionsLoader,
 			allSessionsLoader,
-			(path: string) => {
+			(selection) => {
 				if (!resolved) {
 					resolved = true;
 					ui.stop();
-					resolve(path);
+					resolve(selection);
 				}
 			},
 			() => {
@@ -45,11 +46,11 @@ export async function selectSession(
 				process.exit(0);
 			},
 			() => ui.requestRender(),
-			{ showRenameHint: false, keybindings },
+			{ showRenameHint: false, keybindings, currentCwd },
 		);
 
 		ui.addChild(selector);
-		ui.setFocus(selector.getSessionList());
+		ui.setFocus(selector);
 		startStartupTui(ui, settingsManager);
 	});
 }

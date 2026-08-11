@@ -5191,9 +5191,9 @@ export class InteractiveMode {
 					this.sessionManager.usesDefaultSessionDir()
 						? SessionManager.listAll(onProgress)
 						: SessionManager.listAll(this.sessionManager.getSessionDir(), onProgress),
-				async (sessionPath) => {
+				async (selection) => {
 					done();
-					await this.handleResumeSession(sessionPath);
+					await this.handleResumeSession(selection.path, { cwdOverride: selection.cwdOverride });
 				},
 				() => {
 					done();
@@ -5212,6 +5212,7 @@ export class InteractiveMode {
 					},
 					showRenameHint: true,
 					keybindings: this.keybindings,
+					currentCwd: this.sessionManager.getCwd(),
 				},
 
 				this.sessionManager.getSessionFile(),
@@ -5222,7 +5223,7 @@ export class InteractiveMode {
 
 	private async handleResumeSession(
 		sessionPath: string,
-		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
+		options?: Parameters<ExtensionCommandContext["switchSession"]>[1] & { cwdOverride?: string },
 	): Promise<{ cancelled: boolean }> {
 		if (this.session.privacy.clientZdr) {
 			this.showWarning("Session resume is disabled in ZDR mode.");
@@ -5231,6 +5232,7 @@ export class InteractiveMode {
 		this.clearStatusIndicator();
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
+				cwdOverride: options?.cwdOverride,
 				withSession: options?.withSession,
 				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
 			});

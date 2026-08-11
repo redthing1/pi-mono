@@ -8,6 +8,8 @@ import {
 	type Focusable,
 	getKeybindings,
 	Input,
+	type SelectItem,
+	SelectList,
 	Spacer,
 	Text,
 	truncateToWidth,
@@ -16,12 +18,17 @@ import {
 import { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
-import { theme } from "../theme/theme.ts";
+import { getSelectListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
 
 type SessionScope = "current" | "all";
+
+export interface SessionSelection {
+	path: string;
+	cwdOverride?: string;
+}
 
 function shortenPath(path: string): string {
 	const home = os.homedir();
@@ -296,7 +303,7 @@ class SessionList implements Component, Focusable {
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
 	private currentSessionCanonicalPath?: string;
-	public onSelect?: (sessionPath: string) => void;
+	public onSelect?: (session: SessionInfo) => void;
 	public onCancel?: () => void;
 	public onExit: () => void = () => {};
 	public onToggleScope?: () => void;
@@ -342,7 +349,7 @@ class SessionList implements Component, Focusable {
 			if (this.filteredSessions[this.selectedIndex]) {
 				const selected = this.filteredSessions[this.selectedIndex];
 				if (this.onSelect) {
-					this.onSelect(selected.session.path);
+					this.onSelect(selected.session);
 				}
 			}
 		};
@@ -620,7 +627,7 @@ class SessionList implements Component, Focusable {
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selected = this.filteredSessions[this.selectedIndex];
 			if (selected && this.onSelect) {
-				this.onSelect(selected.session.path);
+				this.onSelect(selected.session);
 			}
 		}
 		// Escape - cancel
@@ -684,6 +691,10 @@ async function deleteSessionFile(
  */
 export class SessionSelectorComponent extends Container implements Focusable {
 	handleInput(data: string): void {
+		if (this.mode === "cwd") {
+			this.cwdSelectList?.handleInput(data);
+			return;
+		}
 		if (this.mode === "rename") {
 			const kb = getKeybindings();
 			if (kb.matches(data, "tui.select.cancel")) {
@@ -713,10 +724,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private currentLoading = false;
 	private allLoading = false;
 	private allLoadSeq = 0;
+	private currentCwd?: string;
+	private onSelect: (selection: SessionSelection) => void;
 
-	private mode: "list" | "rename" = "list";
+	private mode: "list" | "rename" | "cwd" = "list";
 	private renameInput = new Input();
 	private renameTargetPath: string | null = null;
+	private cwdSelectList?: SelectList;
 
 	// Focusable implementation - propagate to sessionList for IME cursor positioning
 	private _focused = false;
@@ -725,7 +739,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	}
 	set focused(value: boolean) {
 		this._focused = value;
-		this.sessionList.focused = value;
+		this.sessionList.focused = value && this.mode === "list";
 		this.renameInput.focused = value;
 		if (value && this.mode === "rename") {
 			this.renameInput.focused = true;
@@ -749,7 +763,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	constructor(
 		currentSessionsLoader: SessionsLoader,
 		allSessionsLoader: SessionsLoader,
-		onSelect: (sessionPath: string) => void,
+		onSelect: (selection: SessionSelection) => void,
 		onCancel: () => void,
 		onExit: () => void,
 		requestRender: () => void,
@@ -757,6 +771,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 			showRenameHint?: boolean;
 			keybindings?: KeybindingsManager;
+			currentCwd?: string;
 		},
 		currentSessionFilePath?: string,
 	) {
@@ -765,6 +780,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
 		this.requestRender = requestRender;
+		this.currentCwd = options?.currentCwd;
+		this.onSelect = onSelect;
 		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
 		const renameSession = options?.renameSession;
 		this.renameSession = renameSession;
@@ -789,9 +806,9 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 		// Ensure header status timeouts are cleared when leaving the selector
 		const clearStatusMessage = () => this.header.setStatusMessage(null);
-		this.sessionList.onSelect = (sessionPath) => {
+		this.sessionList.onSelect = (session) => {
 			clearStatusMessage();
-			onSelect(sessionPath);
+			this.selectSession(session);
 		};
 		this.sessionList.onCancel = () => {
 			clearStatusMessage();
@@ -861,6 +878,56 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 	private loadCurrentSessions(): void {
 		void this.loadScope("current", "initial");
+	}
+
+	private selectSession(session: SessionInfo): void {
+		const currentCwd = this.currentCwd;
+		if (
+			!currentCwd ||
+			!session.cwd ||
+			!existsSync(session.cwd) ||
+			canonicalizePath(currentCwd) === canonicalizePath(session.cwd)
+		) {
+			this.onSelect({ path: session.path });
+			return;
+		}
+
+		this.mode = "cwd";
+		this.sessionList.focused = false;
+		const items: SelectItem[] = [
+			{
+				value: "session",
+				label: "Use original session directory",
+				description: shortenPath(session.cwd),
+			},
+			{
+				value: "current",
+				label: "Use current directory",
+				description: shortenPath(currentCwd),
+			},
+		];
+		this.cwdSelectList = new SelectList(items, items.length, getSelectListTheme());
+		this.cwdSelectList.onSelect = (item) => {
+			this.onSelect(
+				item.value === "current" ? { path: session.path, cwdOverride: currentCwd } : { path: session.path },
+			);
+		};
+		this.cwdSelectList.onCancel = () => this.exitCwdMode();
+
+		const panel = new Container();
+		panel.addChild(new Text(theme.bold("Choose working directory to resume this session"), 1, 0));
+		panel.addChild(new Spacer(1));
+		panel.addChild(this.cwdSelectList);
+		this.buildBaseLayout(panel, { showHeader: false });
+		this.requestRender();
+	}
+
+	private exitCwdMode(): void {
+		this.mode = "list";
+		this.cwdSelectList = undefined;
+		this.sessionList.focused = this.focused;
+		this.buildBaseLayout(this.sessionList);
+		this.requestRender();
 	}
 
 	private enterRenameMode(sessionPath: string, currentName: string | undefined): void {

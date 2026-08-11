@@ -422,15 +422,16 @@ export async function createSessionManager(
 
 	if (parsed.resume) {
 		try {
-			const selectedPath = await selectSession(
+			const selection = await selectSession(
 				(onProgress) => SessionManager.list(cwd, sessionDir, onProgress),
 				(onProgress) => SessionManager.listAll(sessionDir, onProgress),
 				settingsManager,
+				cwd,
 			);
-			if (!selectedPath) {
+			if (!selection) {
 				return SessionManager.create(cwd, sessionDir);
 			}
-			return SessionManager.open(selectedPath, sessionDir);
+			return SessionManager.open(selection.path, sessionDir, selection.cwdOverride);
 		} finally {
 			stopThemeWatcher();
 		}
