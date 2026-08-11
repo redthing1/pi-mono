@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Aligned native write and exploration tool rendering with consistent Codex-style titles, paths, empty states, and added-file previews.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 
 ## [0.84.1] - 2026-08-07

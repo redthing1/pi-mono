@@ -114,6 +114,9 @@ function formatFindSummary(snapshot: ToolExecutionSnapshot): string {
 	if (resultLimit !== undefined) {
 		text += theme.fg("warning", ` limit ${resultLimit}`);
 	}
+	if (textOutput(snapshot).trim() === "No files found matching pattern") {
+		text += theme.fg("muted", " no files");
+	}
 	return text + formatStatusSuffix(snapshot);
 }
 
@@ -125,6 +128,9 @@ function formatLsSummary(snapshot: ToolExecutionSnapshot): string {
 	const entryLimit = numberDetail(snapshot, "entryLimitReached");
 	if (entryLimit !== undefined) {
 		text += theme.fg("warning", ` limit ${entryLimit}`);
+	}
+	if (textOutput(snapshot).trim() === "(empty directory)") {
+		text += theme.fg("muted", " empty");
 	}
 	return text + formatStatusSuffix(snapshot);
 }

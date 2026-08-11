@@ -55,7 +55,8 @@ export function formatBashExplorationSummary(options: {
 				label,
 				row:
 					`${formatAction("Search")} ${theme.fg("accent", `/${parsed.pattern || "..."}/`)}` +
-					theme.fg("toolOutput", ` in ${formatDisplayPath(parsed.path, ".")}`) +
+					theme.fg("toolOutput", " in ") +
+					theme.fg("accent", formatDisplayPath(parsed.path, ".")) +
 					outputSuffix +
 					statusSuffix,
 			};
@@ -64,19 +65,20 @@ export function formatBashExplorationSummary(options: {
 				label,
 				row:
 					`${formatAction("Find")} ${theme.fg("accent", parsed.pattern || "...")}` +
-					theme.fg("toolOutput", ` in ${formatDisplayPath(parsed.path, ".")}`) +
+					theme.fg("toolOutput", " in ") +
+					theme.fg("accent", formatDisplayPath(parsed.path, ".")) +
 					outputSuffix +
 					statusSuffix,
 			};
 		case "list":
 			return {
 				label,
-				row: `${formatAction("List")} ${formatDisplayPath(parsed.path, ".")}${outputSuffix}${statusSuffix}`,
+				row: `${formatAction("List")} ${theme.fg("accent", formatDisplayPath(parsed.path, "."))}${outputSuffix}${statusSuffix}`,
 			};
 		case "read":
 			return {
 				label,
-				row: `${formatAction("Read")} ${formatDisplayPath(parsed.path, "...")}${outputSuffix}${statusSuffix}`,
+				row: `${formatAction("Read")} ${theme.fg("accent", formatDisplayPath(parsed.path, "..."))}${outputSuffix}${statusSuffix}`,
 			};
 	}
 }

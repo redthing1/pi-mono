@@ -1,14 +1,14 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
-import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
-import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { DiffView } from "../../modes/interactive/components/diff.ts";
+import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type { ToolDefinition } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
-import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
+import { normalizeDisplayText, renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const writeSchema = Type.Object({
@@ -46,85 +46,14 @@ export interface WriteToolOptions {
 	operations?: WriteOperations;
 }
 
-type WriteHighlightCache = {
-	rawPath: string | null;
-	lang: string;
-	rawContent: string;
-	normalizedLines: string[];
-	highlightedLines: string[];
-};
+type WriteRenderStatus = "pending" | "success" | "error";
 
-class WriteCallRenderComponent extends Text {
-	cache?: WriteHighlightCache;
+class WriteCallRenderComponent extends Box {
+	diffView?: DiffView;
 
 	constructor() {
-		super("", 0, 0);
+		super(0, 0);
 	}
-}
-
-const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
-
-function highlightSingleLine(line: string, lang: string): string {
-	const highlighted = highlightCode(line, lang);
-	return highlighted[0] ?? "";
-}
-
-function refreshWriteHighlightPrefix(cache: WriteHighlightCache): void {
-	const prefixCount = Math.min(WRITE_PARTIAL_FULL_HIGHLIGHT_LINES, cache.normalizedLines.length);
-	if (prefixCount === 0) return;
-	const prefixSource = cache.normalizedLines.slice(0, prefixCount).join("\n");
-	const prefixHighlighted = highlightCode(prefixSource, cache.lang);
-	for (let i = 0; i < prefixCount; i++) {
-		cache.highlightedLines[i] =
-			prefixHighlighted[i] ?? highlightSingleLine(cache.normalizedLines[i] ?? "", cache.lang);
-	}
-}
-
-function rebuildWriteHighlightCacheFull(rawPath: string | null, fileContent: string): WriteHighlightCache | undefined {
-	const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
-	if (!lang) return undefined;
-	const displayContent = normalizeDisplayText(fileContent);
-	const normalized = replaceTabs(displayContent);
-	return {
-		rawPath,
-		lang,
-		rawContent: fileContent,
-		normalizedLines: normalized.split("\n"),
-		highlightedLines: highlightCode(normalized, lang),
-	};
-}
-
-function updateWriteHighlightCacheIncremental(
-	cache: WriteHighlightCache | undefined,
-	rawPath: string | null,
-	fileContent: string,
-): WriteHighlightCache | undefined {
-	const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
-	if (!lang) return undefined;
-	if (!cache) return rebuildWriteHighlightCacheFull(rawPath, fileContent);
-	if (cache.lang !== lang || cache.rawPath !== rawPath) return rebuildWriteHighlightCacheFull(rawPath, fileContent);
-	if (!fileContent.startsWith(cache.rawContent)) return rebuildWriteHighlightCacheFull(rawPath, fileContent);
-	if (fileContent.length === cache.rawContent.length) return cache;
-
-	const deltaRaw = fileContent.slice(cache.rawContent.length);
-	const deltaDisplay = normalizeDisplayText(deltaRaw);
-	const deltaNormalized = replaceTabs(deltaDisplay);
-	cache.rawContent = fileContent;
-	if (cache.normalizedLines.length === 0) {
-		cache.normalizedLines.push("");
-		cache.highlightedLines.push("");
-	}
-
-	const segments = deltaNormalized.split("\n");
-	const lastIndex = cache.normalizedLines.length - 1;
-	cache.normalizedLines[lastIndex] += segments[0];
-	cache.highlightedLines[lastIndex] = highlightSingleLine(cache.normalizedLines[lastIndex], cache.lang);
-	for (let i = 1; i < segments.length; i++) {
-		cache.normalizedLines.push(segments[i]);
-		cache.highlightedLines.push(highlightSingleLine(segments[i], cache.lang));
-	}
-	refreshWriteHighlightPrefix(cache);
-	return cache;
 }
 
 function trimTrailingEmptyLines(lines: string[]): string[] {
@@ -136,36 +65,55 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 }
 
 function formatWriteCall(
-	args: { path?: string; file_path?: string; content?: string } | undefined,
-	options: ToolRenderResultOptions,
+	args: { path?: string; file_path?: string } | undefined,
+	lineCount: number | undefined,
+	status: WriteRenderStatus,
 	theme: Theme,
-	cache: WriteHighlightCache | undefined,
 	cwd: string,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
-	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
+	const marker = status === "error" ? theme.fg("error", "×") : theme.fg("muted", "•");
+	const title = status === "error" ? "Failed to write" : status === "success" ? "Wrote" : "Writing";
+	const styledTitle = theme.fg(status === "error" ? "error" : "toolTitle", theme.bold(title));
+	let counts = "";
+	if (lineCount !== undefined) {
+		counts = ` ${theme.fg("muted", "(")}${theme.fg("toolDiffAdded", `+${lineCount}`)} ${theme.fg("toolDiffRemoved", "-0")}${theme.fg("muted", ")")}`;
+	}
+	return `${marker} ${styledTitle} ${pathDisplay}${counts}`;
+}
 
-	if (fileContent === null) {
-		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
-	} else if (fileContent) {
-		const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
-		const renderedLines = lang
-			? (cache?.highlightedLines ?? highlightCode(replaceTabs(normalizeDisplayText(fileContent)), lang))
-			: normalizeDisplayText(fileContent).split("\n");
-		const lines = trimTrailingEmptyLines(renderedLines);
-		const totalLines = lines.length;
-		const maxLines = options.expanded ? lines.length : 10;
-		const displayLines = lines.slice(0, maxLines);
-		const remaining = lines.length - maxLines;
-		text += `\n\n${displayLines.map((line) => (lang ? line : theme.fg("toolOutput", replaceTabs(line)))).join("\n")}`;
-		if (remaining > 0) {
-			text += `${theme.fg("muted", `\n... (${remaining} more lines, ${totalLines} total,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+function buildWriteCallComponent(
+	component: WriteCallRenderComponent,
+	args: { path?: string; file_path?: string; content?: string } | undefined,
+	expanded: boolean,
+	status: WriteRenderStatus,
+	theme: Theme,
+	cwd: string,
+): WriteCallRenderComponent {
+	const rawPath = str(args?.file_path ?? args?.path);
+	const fileContent = str(args?.content);
+	const lines =
+		fileContent === null ? undefined : trimTrailingEmptyLines(normalizeDisplayText(fileContent).split("\n"));
+	component.clear();
+	component.addChild(new Text(formatWriteCall(args, lines?.length, status, theme, cwd), 0, 0));
+
+	if (lines && lines.length > 0) {
+		const visibleLines = expanded ? lines : lines.slice(0, 10);
+		const rows = visibleLines.map((line, index) => `+${index + 1} ${line}`);
+		if (visibleLines.length < lines.length) rows.push("    ...");
+		const diff = rows.join("\n");
+		if (component.diffView) {
+			component.diffView.setDiff(diff, { filePath: rawPath ?? undefined });
+		} else {
+			component.diffView = new DiffView(diff, { filePath: rawPath ?? undefined });
 		}
+		component.addChild(component.diffView);
+	} else if (fileContent === null) {
+		component.addChild(new Text(theme.fg("error", "[invalid content arg - expected string]"), 1, 0));
 	}
 
-	return text;
+	return component;
 }
 
 function formatWriteResult(
@@ -182,7 +130,7 @@ function formatWriteResult(
 	if (!output) {
 		return undefined;
 	}
-	return `\n${theme.fg("error", output)}`;
+	return theme.fg("error", output);
 }
 
 export function createWriteToolDefinition(
@@ -199,6 +147,7 @@ export function createWriteToolDefinition(
 		promptSnippet: writeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
 		parameters: writeSchema,
+		renderShell: "self",
 		async execute(
 			_toolCallId,
 			{ path, content }: { path: string; content: string },
@@ -234,38 +183,19 @@ export function createWriteToolDefinition(
 		},
 		renderCall(args, theme, context) {
 			const renderArgs = args as { path?: string; file_path?: string; content?: string } | undefined;
-			const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
-			const fileContent = str(renderArgs?.content);
 			const component =
 				(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
-			if (fileContent !== null) {
-				component.cache = context.argsComplete
-					? rebuildWriteHighlightCacheFull(rawPath, fileContent)
-					: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
-			} else {
-				component.cache = undefined;
-			}
-			component.setText(
-				formatWriteCall(
-					renderArgs,
-					{ expanded: context.expanded, isPartial: context.isPartial },
-					theme,
-					component.cache,
-					context.cwd,
-				),
-			);
-			return component;
+			const status: WriteRenderStatus = context.isError ? "error" : context.isPartial ? "pending" : "success";
+			return buildWriteCallComponent(component, renderArgs, context.expanded, status, theme, context.cwd);
 		},
 		renderResult(result, _options, theme, context) {
 			const output = formatWriteResult({ ...result, isError: context.isError }, theme);
-			if (!output) {
-				const component = (context.lastComponent as Container | undefined) ?? new Container();
-				component.clear();
-				return component;
-			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(output);
-			return text;
+			const component = (context.lastComponent as Container | undefined) ?? new Container();
+			component.clear();
+			if (!output) return component;
+			component.addChild(new Spacer(1));
+			component.addChild(new Text(output, 1, 0));
+			return component;
 		},
 	};
 }

@@ -60,7 +60,7 @@ describe("ExplorationGroupComponent", () => {
 
 		const rendered = renderGroup(group);
 		expect(rendered).toContain("Explored");
-		expect(rendered).toContain("read src/read.ts");
+		expect(rendered).toContain("Read src/read.ts");
 		expect(rendered).toContain("line one");
 		expect(rendered).toContain("line two");
 	});
@@ -116,6 +116,13 @@ describe("ExplorationGroupComponent", () => {
 		expect(listIndex).toBeGreaterThan(findIndex);
 		expect(rendered).not.toContain("src/a.ts:1:ToolExecutionComponent");
 		expect(rendered).not.toContain("read.ts\ngrep.ts");
+
+		group.setExpanded(true);
+		const expanded = renderGroup(group);
+		expect(expanded).toContain("Search /ToolExecutionComponent/ in packages/coding-agent");
+		expect(expanded).toContain("Read packages/coding-agent/src/a.ts");
+		expect(expanded).toContain("Find **/*.test.ts in packages/coding-agent/test");
+		expect(expanded).toContain("List packages/coding-agent/src/core/tools");
 	});
 
 	test("wraps long compact search rows without dropping tail text", () => {
@@ -295,6 +302,24 @@ describe("ExplorationGroupComponent", () => {
 		const rendered = renderGroup(group);
 		expect(rendered).toContain("Exploring");
 		expect(rendered).toContain("Search /needle/");
+	});
+
+	test("shows compact empty results consistently", () => {
+		const group = new ExplorationGroupComponent();
+		const grep = createTool("grep", "grep-empty", { pattern: "needle", path: "." });
+		const find = createTool("find", "find-empty", { pattern: "*.missing", path: "." });
+		const ls = createTool("ls", "ls-empty", { path: "empty" });
+		completeTool(grep, "No matches found");
+		completeTool(find, "No files found matching pattern");
+		completeTool(ls, "(empty directory)");
+		group.addTool(grep);
+		group.addTool(find);
+		group.addTool(ls);
+
+		const rendered = renderGroup(group);
+		expect(rendered).toContain("Search /needle/ in . no matches");
+		expect(rendered).toContain("Find *.missing in . no files");
+		expect(rendered).toContain("List empty empty");
 	});
 
 	test("shows compact failure state and reveals error details when expanded", () => {
