@@ -215,6 +215,11 @@ export class FooterComponent implements Component {
 			rightSideWithoutProvider =
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
 		}
+		const { clientZdr, remoteZdr } = this.session.privacy;
+		if (clientZdr || remoteZdr) {
+			const zdrLabel = clientZdr && remoteZdr ? "zdr" : clientZdr ? "zdr-c" : "zdr-s";
+			rightSideWithoutProvider += ` • ${zdrLabel}`;
+		}
 
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;

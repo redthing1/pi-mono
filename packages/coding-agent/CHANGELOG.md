@@ -7,6 +7,7 @@
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added RPC session listing for the current working-directory session group, with client-ZDR enforcement and a focused summary response.
 - Added `--zdr-server` to require server-ZDR-approved models while retaining normal local session persistence.
+- Added a footer indicator for full, client-only, and server-only ZDR modes.
 - Added provider-neutral simple completions to the extension model registry.
 
 ### Changed

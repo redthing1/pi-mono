@@ -25,6 +25,8 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	clientZdr?: boolean;
+	remoteZdr?: boolean;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -81,6 +83,10 @@ function createSession(options: {
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
+		},
+		privacy: {
+			clientZdr: options.clientZdr ?? false,
+			remoteZdr: options.remoteZdr ?? false,
 		},
 	};
 
@@ -256,5 +262,30 @@ describe("FooterComponent width handling", () => {
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");
+	});
+
+	it.each([
+		{ clientZdr: true, remoteZdr: true, label: "zdr" },
+		{ clientZdr: true, remoteZdr: false, label: "zdr-c" },
+		{ clientZdr: false, remoteZdr: true, label: "zdr-s" },
+	])("appends the $label indicator after model and effort", ({ clientZdr, remoteZdr, label }) => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "test-model",
+			reasoning: true,
+			thinkingLevel: "high",
+			clientZdr,
+			remoteZdr,
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).toMatch(new RegExp(`test-model • high • ${label}$`));
+	});
+
+	it("omits the ZDR indicator outside ZDR modes", () => {
+		const session = createSession({ sessionName: "", modelId: "test-model" });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).toMatch(/test-model$/);
 	});
 });
