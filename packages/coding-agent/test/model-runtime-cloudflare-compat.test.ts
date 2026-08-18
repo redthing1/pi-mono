@@ -4,43 +4,34 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
-const openAIState = vi.hoisted(() => ({ clientOptions: undefined as unknown }));
-
-vi.mock("openai", () => {
-	class FakeOpenAI {
-		constructor(options: unknown) {
-			openAIState.clientOptions = options;
-		}
-
-		chat = {
-			completions: {
-				create: () => {
-					const stream = {
-						async *[Symbol.asyncIterator]() {
-							yield {
-								choices: [{ delta: {}, finish_reason: "stop" }],
-								usage: { prompt_tokens: 1, completion_tokens: 1 },
-							};
-						},
-					};
-					const promise = Promise.resolve(stream) as Promise<typeof stream> & {
-						withResponse(): Promise<{
-							data: typeof stream;
-							response: { status: number; headers: Headers };
-						}>;
-					};
-					promise.withResponse = async () => ({
-						data: stream,
-						response: { status: 200, headers: new Headers() },
-					});
-					return promise;
-				},
-			},
+function createFetchMock() {
+	return vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
+		const chunk = {
+			id: "chatcmpl-test",
+			object: "chat.completion.chunk",
+			created: 0,
+			model: "test",
+			choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
 		};
-	}
+		return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+	});
+}
 
-	return { default: FakeOpenAI };
-});
+function expectCloudflareRequest(fetchMock: ReturnType<typeof createFetchMock>, expectMaskedHeaders: boolean): void {
+	const [input, init] = fetchMock.mock.calls[0];
+	const url = input instanceof Request ? input.url : input.toString();
+	const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
+	expect(url).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat/chat/completions");
+	expect(headers.get("cf-aig-authorization")).toBe("Bearer test-token");
+	if (expectMaskedHeaders) {
+		expect(headers.has("authorization")).toBe(false);
+		expect(headers.has("x-api-key")).toBe(false);
+	}
+}
 
 async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; modelRegistry: ModelRegistry }> {
 	const authStorage = AuthStorage.inMemory();
@@ -59,23 +50,20 @@ async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; 
 describe("ModelRegistry Cloudflare compat streaming", () => {
 	it("materializes the Cloudflare endpoint through ModelRuntime streaming", async () => {
 		const { modelRuntime } = await createCloudflareRuntime();
-		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.5");
+		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
 		expect(model).toBeDefined();
+		expect(model?.api).toBe("openai-completions");
 
+		const fetchMock = createFetchMock();
 		resetApiProviders();
-		await modelRuntime.completeSimple(model!, { messages: [] });
-
-		const clientOptions = openAIState.clientOptions as {
-			baseURL?: string;
-			defaultHeaders?: Record<string, unknown>;
-		};
-		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
-		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
+		const result = await modelRuntime.completeSimple(model!, { messages: [] }, { fetch: fetchMock });
+		expect(result.errorMessage).toBeUndefined();
+		expectCloudflareRequest(fetchMock, false);
 	});
 
 	it("materializes the Cloudflare endpoint after extension-style auth resolution", async () => {
 		const { modelRegistry } = await createCloudflareRuntime();
-		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.5");
+		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
 		expect(model).toBeDefined();
 
 		resetApiProviders();
@@ -88,15 +76,9 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 			"x-api-key": null,
 		});
 
-		await complete(model!, { messages: [] }, auth);
-
-		const clientOptions = openAIState.clientOptions as {
-			baseURL?: string;
-			defaultHeaders?: Record<string, unknown>;
-		};
-		expect(clientOptions.baseURL).toBe("https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat");
-		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test-token");
-		expect(clientOptions.defaultHeaders?.Authorization).toBeNull();
-		expect(clientOptions.defaultHeaders?.["x-api-key"]).toBeNull();
+		const fetchMock = createFetchMock();
+		const result = await complete(model!, { messages: [] }, { ...auth, fetch: fetchMock });
+		expect(result.errorMessage).toBeUndefined();
+		expectCloudflareRequest(fetchMock, true);
 	});
 });

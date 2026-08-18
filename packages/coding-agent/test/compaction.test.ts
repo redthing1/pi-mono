@@ -5,6 +5,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+	type CompactionPreparation,
 	type CompactionSettings,
 	calculateContextTokens,
 	compact,
@@ -94,7 +95,11 @@ function createMessageEntry(message: AgentMessage): SessionMessageEntry {
 	return entry;
 }
 
-function createCompactionEntry(summary: string, firstKeptEntryId: string): CompactionEntry {
+function createCompactionEntry(
+	summary: string,
+	firstKeptEntryId: string | null,
+	placement?: "before-retained" | "after-retained",
+): CompactionEntry {
 	const id = `test-id-${entryCounter++}`;
 	const entry: CompactionEntry = {
 		type: "compaction",
@@ -103,6 +108,7 @@ function createCompactionEntry(summary: string, firstKeptEntryId: string): Compa
 		timestamp: new Date().toISOString(),
 		summary,
 		firstKeptEntryId,
+		placement,
 		tokensBefore: 10000,
 	};
 	lastId = id;
@@ -163,6 +169,17 @@ function createCustomEntry(): CustomEntry {
 	};
 	lastId = id;
 	return entry;
+}
+
+function requireSourceMessages(
+	preparation: CompactionPreparation | undefined,
+): asserts preparation is CompactionPreparation & {
+	sourceMessages: AgentMessage[];
+	turnPrefixSourceMessages: AgentMessage[];
+} {
+	if (!preparation?.sourceMessages || !preparation.turnPrefixSourceMessages) {
+		throw new Error("Expected compaction source messages");
+	}
 }
 
 function extractText(messages: AgentMessage[]): string {
@@ -516,6 +533,81 @@ describe("buildSessionContext", () => {
 	});
 });
 
+describe("prepareCompaction source messages", () => {
+	it("provides the active history prefix for a normal compaction", () => {
+		const u1 = createMessageEntry(createUserMessage("old user ".repeat(20)));
+		const a1 = createMessageEntry(createAssistantMessage("old assistant ".repeat(20)));
+		const u2 = createMessageEntry(createUserMessage("recent user"));
+		const a2 = createMessageEntry(createAssistantMessage("ok"));
+		const settings: CompactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 3 };
+
+		const preparation = prepareCompaction([u1, a1, u2, a2], settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.isSplitTurn).toBe(false);
+		expect(preparation.sourceMessages).toEqual(preparation.messagesToSummarize);
+		expect(extractText(preparation.sourceMessages)).toContain("old user");
+		expect(extractText(preparation.sourceMessages)).not.toContain("recent user");
+		expect(preparation.turnPrefixSourceMessages).toEqual([]);
+	});
+
+	it("provides the active prefix through a split turn", () => {
+		const user = createMessageEntry(createUserMessage("large request ".repeat(20)));
+		const earlyAssistant = createMessageEntry(createAssistantMessage("early work ".repeat(20)));
+		const keptAssistant = createMessageEntry(createAssistantMessage("kept"));
+		const settings: CompactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 };
+
+		const preparation = prepareCompaction([user, earlyAssistant, keptAssistant], settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.isSplitTurn).toBe(true);
+		expect(preparation.messagesToSummarize).toEqual([]);
+		expect(preparation.sourceMessages).toEqual([]);
+		expect(preparation.turnPrefixSourceMessages).toEqual(preparation.turnPrefixMessages);
+		expect(extractText(preparation.turnPrefixSourceMessages)).toContain("large request");
+		expect(extractText(preparation.turnPrefixSourceMessages)).not.toContain("kept");
+	});
+
+	it("preserves provider order after an after-retained Horizon checkpoint", () => {
+		const oldUser = createMessageEntry(createUserMessage("discarded user"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("discarded assistant"));
+		const retainedUser = createMessageEntry(createUserMessage("retained user ".repeat(20)));
+		const retainedAssistant = createMessageEntry(createAssistantMessage("retained assistant ".repeat(20)));
+		const horizon = createCompactionEntry("Horizon checkpoint", retainedUser.id, "after-retained");
+		const recentUser = createMessageEntry(createUserMessage("recent user ".repeat(20)));
+		const recentAssistant = createMessageEntry(createAssistantMessage("kept"));
+		const entries = [oldUser, oldAssistant, retainedUser, retainedAssistant, horizon, recentUser, recentAssistant];
+		const settings: CompactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 };
+
+		const preparation = prepareCompaction(entries, settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		const activeMessages = buildSessionContext(entries).messages;
+		expect(preparation.sourceMessages).toEqual(activeMessages.slice(0, preparation.sourceMessages.length));
+		const sourceText = extractText(preparation.sourceMessages);
+		expect(sourceText.indexOf("retained user")).toBeLessThan(sourceText.indexOf("Horizon checkpoint"));
+		expect(sourceText).not.toContain("discarded user");
+	});
+
+	it("uses the complete active prefix for null-anchor overflow preparation", () => {
+		const user = createMessageEntry(createUserMessage("small request"));
+		const assistant = createMessageEntry(createAssistantMessage("small response"));
+		const entries = [user, assistant];
+		const settings: CompactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1_000_000 };
+
+		const preparation = prepareCompaction(entries, settings, true);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.firstKeptEntryId).toBeNull();
+		expect(preparation.messagesToSummarize).toEqual(buildSessionContext(entries).messages);
+		expect(preparation.sourceMessages).toEqual(buildSessionContext(entries).messages);
+	});
+});
+
 describe("prepareCompaction with previous compaction", () => {
 	it("should skip repeated compactions when kept messages still fit", () => {
 		const u1 = createMessageEntry(createUserMessage("user msg 1 (summarized by compaction1)"));
@@ -532,6 +624,33 @@ describe("prepareCompaction with previous compaction", () => {
 		const preparation = prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS);
 
 		expect(preparation).toBeUndefined();
+	});
+
+	it("uses the exact active source prefix after nested compactions", () => {
+		const u1 = createMessageEntry(createUserMessage("user 1"));
+		const a1 = createMessageEntry(createAssistantMessage("assistant 1"));
+		const u2 = createMessageEntry(createUserMessage("user 2 ".repeat(20)));
+		const a2 = createMessageEntry(createAssistantMessage("assistant 2 ".repeat(20)));
+		const compaction1 = createCompactionEntry("First summary", u1.id);
+		const u3 = createMessageEntry(createUserMessage("user 3 ".repeat(20)));
+		const a3 = createMessageEntry(createAssistantMessage("assistant 3 ".repeat(20)));
+		const compaction2 = createCompactionEntry("Second summary", u2.id);
+		const u4 = createMessageEntry(createUserMessage("user 4 ".repeat(20)));
+		const a4 = createMessageEntry(createAssistantMessage("kept"));
+		const settings: CompactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 };
+		const pathEntries = [u1, a1, u2, a2, compaction1, u3, a3, compaction2, u4, a4];
+
+		const preparation = prepareCompaction(pathEntries, settings);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		const activeMessages = buildSessionContext(pathEntries).messages;
+		expect(preparation.sourceMessages).toEqual(activeMessages.slice(0, preparation.sourceMessages.length));
+		expect(preparation.turnPrefixSourceMessages).toEqual(
+			activeMessages.slice(0, preparation.turnPrefixSourceMessages.length),
+		);
+		const sourceSummaries = preparation.sourceMessages.filter((message) => message.role === "compactionSummary");
+		expect(sourceSummaries.map((message) => message.summary)).toEqual(["Second summary"]);
 	});
 
 	it("should re-summarize previously kept messages when the recent window moves past them", () => {
@@ -552,11 +671,15 @@ describe("prepareCompaction with previous compaction", () => {
 		const preparation = prepareCompaction([u1, a1, u2, a2, u3, a3, compaction1, u4, a4], settings);
 
 		expect(preparation).toBeDefined();
-		const summarizedText = extractText(preparation!.messagesToSummarize);
+		requireSourceMessages(preparation);
+		const summarizedText = extractText(preparation.messagesToSummarize);
 		expect(summarizedText).toContain("user msg 2 - kept by compaction1");
 		expect(summarizedText).toContain("user msg 3 - kept by compaction1");
 		expect(summarizedText).not.toContain("First summary");
-		expect(preparation!.previousSummary).toBe("First summary");
+		expect(preparation.previousSummary).toBe("First summary");
+		expect(preparation.sourceMessages[0]?.role).toBe("compactionSummary");
+		expect(extractText(preparation.sourceMessages)).toContain("First summary");
+		expect(preparation.sourceMessages.slice(1)).toEqual(preparation.messagesToSummarize);
 	});
 });
 

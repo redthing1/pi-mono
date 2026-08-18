@@ -275,6 +275,29 @@ async function runLoop(
 	await emit({ type: "agent_end", messages: newMessages });
 }
 
+/** Build the provider context using the same transform and conversion pipeline as an agent request. */
+export async function buildProviderContext(
+	context: AgentContext,
+	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext">,
+	signal?: AbortSignal,
+): Promise<Context> {
+	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+	let messages = context.messages;
+	if (config.transformContext) {
+		messages = await config.transformContext(messages, signal);
+	}
+
+	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+	const llmMessages = await config.convertToLlm(messages);
+
+	// Build LLM context
+	return {
+		systemPrompt: context.systemPrompt,
+		messages: llmMessages,
+		tools: context.tools,
+	};
+}
+
 /**
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
@@ -287,23 +310,6 @@ function copyAgentContext(context: AgentContext): AgentContext {
 	};
 }
 
-async function prepareLlmContext(
-	context: AgentContext,
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-): Promise<Context> {
-	let messages = context.messages;
-	if (config.transformContext) {
-		messages = await config.transformContext(messages, signal);
-	}
-
-	return {
-		systemPrompt: context.systemPrompt,
-		messages: await config.convertToLlm(messages),
-		tools: context.tools,
-	};
-}
-
 async function prepareInference(
 	context: AgentContext,
 	agentContext: AgentContext,
@@ -313,7 +319,7 @@ async function prepareInference(
 ): Promise<BeforeInferenceContext> {
 	return {
 		agentContext,
-		llmContext: await prepareLlmContext(context, config, signal),
+		llmContext: await buildProviderContext(context, config, signal),
 		model: config.model,
 		reasoning: config.reasoning,
 		desiredOutputCap: config.maxTokens ?? config.model.maxTokens,
@@ -383,7 +389,7 @@ async function streamAssistantResponse(
 		llmContext = prepared.llmContext;
 	} else {
 		// Preserve the default path: no defensive raw-context snapshot without a hook.
-		llmContext = await prepareLlmContext(context, config, signal);
+		llmContext = await buildProviderContext(context, config, signal);
 		if (signal?.aborted) {
 			return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
 		}

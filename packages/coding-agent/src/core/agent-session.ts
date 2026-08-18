@@ -58,6 +58,7 @@ import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
+	type CompactionPreparation,
 	type CompactionResult,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
@@ -85,6 +86,7 @@ import {
 	type ReplacedSessionContext,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
+	type SessionCompactFailedEvent,
 	type SessionCompactionCheckResult,
 	type SessionStartEvent,
 	type ShutdownHandler,
@@ -271,7 +273,7 @@ export interface ExtensionBindings {
 
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
-	/** Whether to expand file-based prompt templates (default: true) */
+	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
@@ -706,15 +708,14 @@ export class AgentSession {
 	}
 
 	private async _prepareCurrentSourceContext(signal?: AbortSignal): Promise<Context> {
-		let messages = this.agent.state.messages.slice();
-		if (this.agent.transformContext) {
-			messages = await this.agent.transformContext(messages, signal);
-		}
-		return {
-			systemPrompt: this.agent.state.systemPrompt,
-			messages: await this.agent.convertToLlm(messages),
-			tools: this.agent.state.tools,
-		};
+		return this.agent.buildProviderContext(
+			{
+				systemPrompt: this.agent.state.systemPrompt,
+				messages: this.agent.state.messages,
+				tools: this.agent.state.tools,
+			},
+			signal,
+		);
 	}
 
 	private _shouldUseDefaultCompaction(inference: BeforeInferenceContext): boolean {
@@ -761,9 +762,9 @@ export class AgentSession {
 			}
 		}
 
+		let fromExtension = false;
 		try {
 			let compactionResult: CompactionResult | undefined;
-			let fromExtension = false;
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
 				const extensionResult = (await this._extensionRunner.emit({
 					type: "session_before_compact",
@@ -778,7 +779,7 @@ export class AgentSession {
 
 				if (extensionResult?.cancel) {
 					releaseController();
-					this._finishInferenceCompaction(undefined, true);
+					await this._finishInferenceCompaction(undefined, true);
 					return { action: "stop", errorMessage: "Compaction cancelled" };
 				}
 				if (extensionResult?.compaction) {
@@ -788,25 +789,18 @@ export class AgentSession {
 			}
 
 			if (!compactionResult) {
-				const { model, apiKey, headers, env } = await this._getSummarizationRequestAuth(inference.model);
-				compactionResult = await compact(
+				compactionResult = await this._runDefaultCompaction(
 					preparation,
-					model,
-					apiKey,
-					headers,
+					inference.model,
 					undefined,
 					controller.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
-					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason: "threshold" }),
+					"threshold",
 				);
 			}
 
 			if (controller.signal.aborted) {
 				releaseController();
-				this._finishInferenceCompaction(undefined, true);
+				await this._finishInferenceCompaction(undefined, true, fromExtension);
 				return { action: "stop", errorMessage: "Compaction cancelled" };
 			}
 
@@ -844,7 +838,11 @@ export class AgentSession {
 			const aborted = controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			releaseController();
-			this._finishInferenceCompaction(aborted ? undefined : `Automatic compaction failed: ${errorMessage}`, aborted);
+			await this._finishInferenceCompaction(
+				aborted ? undefined : `Automatic compaction failed: ${errorMessage}`,
+				aborted,
+				fromExtension,
+			);
 			return {
 				action: "stop",
 				errorMessage: aborted ? "Compaction cancelled" : `Automatic compaction failed: ${errorMessage}`,
@@ -861,22 +859,25 @@ export class AgentSession {
 			return { action: "send" };
 		}
 		if (signal?.aborted || this._autoCompactionAbortController?.signal.aborted) {
-			this._finishInferenceCompaction(undefined, true);
+			await this._finishInferenceCompaction(undefined, true);
 			return { action: "stop", errorMessage: "Compaction cancelled" };
 		}
 		if (!modelsAreEqual(pending.model, inference.model)) {
-			this._finishInferenceCompaction("Automatic compaction model changed before commit", false);
+			await this._finishInferenceCompaction("Automatic compaction model changed before commit", false);
 			return { action: "stop", errorMessage: "Automatic compaction model changed before commit" };
 		}
 		if (
 			inference.agentContext.messages.length !== pending.candidate.context.messages.length ||
 			inference.agentContext.messages.some((message, index) => message !== pending.candidate.context.messages[index])
 		) {
-			this._finishInferenceCompaction("Automatic compaction replacement changed before commit", false);
+			await this._finishInferenceCompaction("Automatic compaction replacement changed before commit", false);
 			return { action: "stop", errorMessage: "Automatic compaction replacement changed before commit" };
 		}
 		if (!hasCompleteToolFlow(inference.llmContext.messages)) {
-			this._finishInferenceCompaction("Automatic compaction replacement has incomplete tool-call protocol", false);
+			await this._finishInferenceCompaction(
+				"Automatic compaction replacement has incomplete tool-call protocol",
+				false,
+			);
 			return {
 				action: "stop",
 				errorMessage: "Automatic compaction replacement has incomplete tool-call protocol",
@@ -886,7 +887,7 @@ export class AgentSession {
 		const conservativePreparedTokens =
 			preparedEstimate.usageTokens + Math.ceil(preparedEstimate.trailingTokens * 1.35);
 		if (conservativePreparedTokens >= inference.model.contextWindow) {
-			this._finishInferenceCompaction(
+			await this._finishInferenceCompaction(
 				"Automatic compaction replacement still exceeds the model context window",
 				false,
 			);
@@ -904,10 +905,10 @@ export class AgentSession {
 				this._fatalSessionError =
 					`Session persistence became indeterminate during automatic compaction: ${errorMessage}. ` +
 					"Replace this AgentSession by starting or reopening a session before sending more messages.";
-				this._finishInferenceCompaction(this._fatalSessionError, false);
+				await this._finishInferenceCompaction(this._fatalSessionError, false);
 				return { action: "stop", errorMessage: this._fatalSessionError };
 			}
-			this._finishInferenceCompaction(`Automatic compaction commit failed: ${errorMessage}`, false);
+			await this._finishInferenceCompaction(`Automatic compaction commit failed: ${errorMessage}`, false);
 			return { action: "stop", errorMessage: `Automatic compaction commit failed: ${errorMessage}` };
 		}
 
@@ -952,7 +953,11 @@ export class AgentSession {
 		}
 	}
 
-	private _finishInferenceCompaction(errorMessage: string | undefined, aborted: boolean): void {
+	private async _finishInferenceCompaction(
+		errorMessage: string | undefined,
+		aborted: boolean,
+		fromExtension = this._pendingInferenceCompaction?.fromExtension ?? false,
+	): Promise<void> {
 		this._discardPendingInferenceCompaction();
 		this._emit({
 			type: "compaction_end",
@@ -961,6 +966,13 @@ export class AgentSession {
 			aborted,
 			willRetry: false,
 			errorMessage,
+		});
+		await this._emitSessionCompactFailed({
+			reason: "threshold",
+			errorMessage,
+			aborted,
+			willRetry: false,
+			fromExtension,
 		});
 	}
 
@@ -990,6 +1002,12 @@ export class AgentSession {
 			steering: [...this._steeringMessages],
 			followUp: this._followUpMessages.map((message) => contentText(message.content, "")),
 		});
+	}
+
+	private async _emitSessionCompactFailed(event: Omit<SessionCompactFailedEvent, "type">): Promise<void> {
+		if (this._extensionRunner.hasHandlers("session_compact_failed")) {
+			await this._extensionRunner.emit({ type: "session_compact_failed", ...event });
+		}
 	}
 
 	private _getIdleWaitPromise(): Promise<void> {
@@ -1486,7 +1504,7 @@ export class AgentSession {
 		} finally {
 			if (this._pendingInferenceCompaction) {
 				const aborted = this._autoCompactionAbortController?.signal.aborted ?? false;
-				this._finishInferenceCompaction(
+				await this._finishInferenceCompaction(
 					aborted ? undefined : "Automatic compaction did not reach provider acceptance",
 					aborted,
 				);
@@ -1947,7 +1965,7 @@ export class AgentSession {
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
-		} else if (this.isStreaming) {
+		} else if (this.isStreaming && options?.triggerTurn !== false) {
 			if (options?.deliverAs === "followUp") {
 				this.agent.followUp(appMessage);
 			} else {
@@ -1974,10 +1992,11 @@ export class AgentSession {
 	 *
 	 * @param content User message content (string or content array)
 	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+	 * @param options.expandPromptTemplates Whether to dispatch extension commands and expand skill commands and prompt templates. Default: false.
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
@@ -1999,9 +2018,8 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
-		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 		await this.prompt(text, {
-			expandPromptTemplates: false,
+			expandPromptTemplates: options?.expandPromptTemplates ?? false,
 			streamingBehavior: options?.deliverAs,
 			images,
 			source: "extension",
@@ -2322,15 +2340,50 @@ export class AgentSession {
 	// Compaction
 	// =========================================================================
 
+	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
+	private async _runDefaultCompaction(
+		preparation: CompactionPreparation,
+		model: Model<any>,
+		customInstructions: string | undefined,
+		signal: AbortSignal,
+		reason: "manual" | "threshold" | "overflow",
+	): Promise<CompactionResult> {
+		const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+		return compact(
+			preparation,
+			requestModel,
+			apiKey,
+			headers,
+			customInstructions,
+			signal,
+			this.thinkingLevel,
+			this.agent.streamFunction,
+			env,
+			this.settingsManager.getRetrySettings(),
+			this._summarizationRetryCallbacks({ source: "compaction", reason }),
+			undefined, // cacheFriendly
+		);
+	}
+
 	/**
 	 * Manually compact the session context.
-	 * Aborts current agent operation first.
+	 *
+	 * This is the manual entry point used by `/compact`, RPC, and extensions. It is
+	 * separate from automatic threshold compaction at the provider boundary and
+	 * durable-prefix overflow recovery. After preparation and the
+	 * `session_before_compact` hook, each path uses `_runDefaultCompaction()` unless
+	 * the hook cancels or supplies a custom result.
+	 *
+	 * Aborts the current agent operation first. Manual compaction never retries or
+	 * continues the interrupted agent turn.
+	 *
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		await this.abort();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
+		let fromExtension = false;
 
 		try {
 			if (!this.model) {
@@ -2351,7 +2404,6 @@ export class AgentSession {
 			}
 
 			let extensionCompaction: CompactionResult | undefined;
-			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
 				const sourceContext = await this._prepareCurrentSourceContext(this._compactionAbortController.signal);
@@ -2394,20 +2446,13 @@ export class AgentSession {
 				placement = extensionCompaction.placement;
 				label = extensionCompaction.label;
 			} else {
-				// Generate compaction result
-				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
-				const result = await compact(
+				// Shared default summary generator, also used by automatic compaction.
+				const result = await this._runDefaultCompaction(
 					preparation,
-					requestModel,
-					apiKey,
-					headers,
+					this.model,
 					customInstructions,
 					this._compactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
-					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason: "manual" }),
+					"manual",
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2475,6 +2520,7 @@ export class AgentSession {
 					`Session persistence became indeterminate during manual compaction: ${message}. ` +
 					"Replace this AgentSession by starting or reopening a session before sending more messages.";
 			}
+			const errorMessage = aborted ? undefined : (this._fatalSessionError ?? `Compaction failed: ${message}`);
 			this._compactionAbortController = undefined;
 			this._emit({
 				type: "compaction_end",
@@ -2482,7 +2528,14 @@ export class AgentSession {
 				result: undefined,
 				aborted,
 				willRetry: false,
-				errorMessage: aborted ? undefined : (this._fatalSessionError ?? `Compaction failed: ${message}`),
+				errorMessage,
+			});
+			await this._emitSessionCompactFailed({
+				reason: "manual",
+				errorMessage,
+				aborted,
+				willRetry: false,
+				fromExtension,
 			});
 			throw error;
 		} finally {
@@ -2534,19 +2587,29 @@ export class AgentSession {
 		// Explicit/silent context overflow still uses context metadata.
 		// A length stop is recoverable when output ended below the model's original desired limit,
 		// independent of the configured context size or any context-clamped provider request limit.
+		const contextOverflow = sameModel && isContextOverflow(assistantMessage, contextWindow);
 		const recoverableLength = sameModel && isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
-		if (sameModel && (isContextOverflow(assistantMessage, contextWindow) || recoverableLength)) {
+		if (contextOverflow || recoverableLength) {
 			if (assistantMessage.stopReason === "stop") return false;
 
 			if (this._overflowRecoveryAttempted) {
+				const errorMessage = contextOverflow
+					? "Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model."
+					: "Truncated response recovery failed after one compact-and-retry attempt.";
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
 					result: undefined,
 					aborted: false,
 					willRetry: false,
-					errorMessage:
-						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+					errorMessage,
+				});
+				await this._emitSessionCompactFailed({
+					reason: "overflow",
+					errorMessage,
+					aborted: false,
+					willRetry: false,
+					fromExtension: false,
 				});
 				return false;
 			}
@@ -2561,6 +2624,7 @@ export class AgentSession {
 	private async _runOverflowCompaction(failedAssistant?: AssistantMessage): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
+		let fromExtension = false;
 		let supersededLeafId: string | undefined;
 		const reason = "overflow" as const;
 		const willRetry = true;
@@ -2598,7 +2662,6 @@ export class AgentSession {
 			started = true;
 
 			let extensionCompaction: CompactionResult | undefined;
-			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
 				const sourceContext = this._lastDispatchedContext;
@@ -2623,6 +2686,12 @@ export class AgentSession {
 						result: undefined,
 						aborted: true,
 						willRetry: false,
+					});
+					await this._emitSessionCompactFailed({
+						reason,
+						aborted: true,
+						willRetry: false,
+						fromExtension: false,
 					});
 					return false;
 				}
@@ -2651,20 +2720,13 @@ export class AgentSession {
 				placement = extensionCompaction.placement;
 				label = extensionCompaction.label;
 			} else {
-				// Generate compaction result
-				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
-				const compactResult = await compact(
+				// Shared default summary generator, also used by manual compaction.
+				const compactResult = await this._runDefaultCompaction(
 					preparation,
-					requestModel,
-					apiKey,
-					headers,
+					this.model,
 					undefined,
 					this._autoCompactionAbortController.signal,
-					this.thinkingLevel,
-					this.agent.streamFunction,
-					env,
-					this.settingsManager.getRetrySettings(),
-					this._summarizationRetryCallbacks({ source: "compaction", reason }),
+					reason,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2682,6 +2744,12 @@ export class AgentSession {
 					result: undefined,
 					aborted: true,
 					willRetry: false,
+				});
+				await this._emitSessionCompactFailed({
+					reason,
+					aborted: true,
+					willRetry: false,
+					fromExtension,
 				});
 				return false;
 			}
@@ -2737,13 +2805,22 @@ export class AgentSession {
 					"Replace this AgentSession by starting or reopening a session before sending more messages.";
 			}
 			if (started) {
+				const formattedErrorMessage =
+					this._fatalSessionError ?? `Context overflow recovery failed: ${errorMessage}`;
 				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
 					aborted: false,
 					willRetry: false,
-					errorMessage: this._fatalSessionError ?? `Context overflow recovery failed: ${errorMessage}`,
+					errorMessage: formattedErrorMessage,
+				});
+				await this._emitSessionCompactFailed({
+					reason,
+					errorMessage: formattedErrorMessage,
+					aborted: false,
+					willRetry: false,
+					fromExtension,
 				});
 			}
 			return false;
@@ -3774,12 +3851,14 @@ export class AgentSession {
 	/**
 	 * Export session to HTML.
 	 * @param outputPath Optional output path (defaults to session directory)
+	 * @param options Optional export presentation settings
 	 * @returns Path to exported file
 	 */
-	async exportToHtml(outputPath?: string): Promise<string> {
+	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
 		this._assertExportAllowed(outputPath);
-		const configuredThemeName = this.settingsManager.getTheme();
-		const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
+		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
+			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
+		);
 
 		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
 		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({

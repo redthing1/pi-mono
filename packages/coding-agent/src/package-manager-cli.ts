@@ -379,7 +379,7 @@ async function refreshModelCatalogs(agentDir: string): Promise<void> {
 
 function printSelfUpdateDisabled(): void {
 	console.error(chalk.red(`${APP_NAME} self-update is disabled in this fork.`));
-	console.error(chalk.dim("Pi never downloads or installs update code. Use a reviewed local build."));
+	console.error(chalk.dim(`${APP_NAME} never downloads or installs update code. Use a reviewed local build.`));
 }
 
 function printPackageUpdatesDisabled(): void {

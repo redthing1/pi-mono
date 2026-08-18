@@ -1,4 +1,3 @@
-import type * as NodeOs from "node:os";
 import type * as NodeZlib from "node:zlib";
 import type {
 	Tool as OpenAITool,
@@ -6,20 +5,6 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
-
-type ProcessWithOsBuiltinModule = typeof process & {
-	getBuiltinModule?: (id: "node:os") => typeof NodeOs;
-};
-
-function loadNodeOs(): typeof NodeOs | null {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
-		return null;
-	}
-	return (process as ProcessWithOsBuiltinModule).getBuiltinModule?.("node:os") ?? null;
-}
-
-// NEVER convert to top-level runtime imports - breaks browser/Vite builds
-const _os: typeof NodeOs | null = loadNodeOs();
 
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
@@ -46,6 +31,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -478,7 +464,22 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				startEmitted = true;
 				stream.push({ type: "start", partial: output });
 			}
-			await processStream(response, output, stream, model, grammarToolInputProperties, options);
+			try {
+				await processStream(response, output, stream, model, grammarToolInputProperties, options);
+			} catch (error) {
+				if (!options?.signal?.aborted && error instanceof CodexStreamDisconnectError) {
+					appendAssistantMessageDiagnostic(
+						output,
+						createAssistantMessageDiagnostic("provider_transport_failure", error.originalError, {
+							configuredTransport: "sse",
+							eventsEmitted: true,
+							phase: "after_message_stream_start",
+							requestBytes: new TextEncoder().encode(bodyJson).byteLength,
+						}),
+					);
+				}
+				throw error;
+			}
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -513,7 +514,10 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, context, options, apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, apiKey),
+		toolChoice: options?.toolChoice,
+	} satisfies OpenAICodexResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 
@@ -668,12 +672,19 @@ async function processStream(
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		grammarToolInputProperties,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	try {
+		await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
+			serviceTier: options?.serviceTier,
+			grammarToolInputProperties,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		});
+	} catch (error) {
+		if (isMissingTerminalResponseEvent(error)) {
+			throw new CodexStreamDisconnectError(error);
+		}
+		throw error;
+	}
 }
 
 class CodexApiError extends Error {
@@ -700,8 +711,22 @@ class CodexProtocolError extends Error {
 	}
 }
 
+class CodexStreamDisconnectError extends Error {
+	readonly originalError: unknown;
+
+	constructor(originalError: unknown) {
+		super(`stream disconnected before completion: ${formatThrownValue(originalError)}`);
+		this.name = "CodexStreamDisconnectError";
+		this.originalError = originalError;
+	}
+}
+
 function isCodexNonTransportError(error: unknown): boolean {
 	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+}
+
+function isMissingTerminalResponseEvent(error: unknown): boolean {
+	return error instanceof Error && error.message === "OpenAI Responses stream ended before a terminal response event";
 }
 
 function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
@@ -789,7 +814,16 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
-			const { done, value } = await reader.read();
+			let readResult: ReadableStreamReadResult<Uint8Array>;
+			try {
+				readResult = await reader.read();
+			} catch (error) {
+				if (signal?.aborted) {
+					throw new Error("Request was aborted");
+				}
+				throw new CodexStreamDisconnectError(error);
+			}
+			const { done, value } = readResult;
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
@@ -1618,8 +1652,7 @@ function buildBaseCodexHeaders(
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
 	headers.set("originator", "pi");
-	const userAgent = _os ? `pi (${_os.platform()} ${_os.release()}; ${_os.arch()})` : "pi (browser)";
-	headers.set("User-Agent", userAgent);
+	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
 

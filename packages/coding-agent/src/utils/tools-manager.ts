@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import chalk from "chalk";
 
 interface ToolConfig {
 	name: string;
@@ -18,6 +17,11 @@ const TOOLS: Record<"fd" | "rg", ToolConfig> = {
 		binaryName: "rg",
 	},
 };
+
+export interface ToolStatus {
+	type: "info" | "warning";
+	message: string;
+}
 
 function commandExists(command: string): boolean {
 	try {
@@ -40,20 +44,19 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 }
 
 /**
- * Return an already installed system tool, warning interactively when absent.
+ * Return an already installed system tool and report when it is absent.
  * Kept async because callers resolve both tools concurrently at startup.
  */
-export async function ensureTool(tool: "fd" | "rg", silent = false): Promise<string | undefined> {
+export async function ensureTool(
+	tool: "fd" | "rg",
+	onStatus?: (status: ToolStatus) => void,
+): Promise<string | undefined> {
 	const toolPath = getToolPath(tool);
 	if (toolPath) return toolPath;
 
-	if (!silent) {
-		console.log(
-			chalk.yellow(
-				`${TOOLS[tool].name} not found. Install it with your system package manager and add it to PATH; Pi will not download tools automatically.`,
-			),
-		);
-	}
-
+	onStatus?.({
+		type: "warning",
+		message: `${TOOLS[tool].name} not found. Install it with your system package manager and add it to PATH; Pi will not download tools automatically.`,
+	});
 	return undefined;
 }
