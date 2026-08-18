@@ -49,9 +49,10 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { getSessionsDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
-import { resolvePath } from "../utils/paths.ts";
+import { getCwdRelativePath, resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -3776,9 +3777,7 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string): Promise<string> {
-		if (this._privacy.clientZdr) {
-			throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
-		}
+		this._assertExportAllowed(outputPath);
 		const configuredThemeName = this.settingsManager.getTheme();
 		const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
 
@@ -3803,9 +3802,7 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
-		if (this._privacy.clientZdr) {
-			throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
-		}
+		this._assertExportAllowed(outputPath);
 		const filePath = resolvePath(
 			outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`,
 			process.cwd(),
@@ -3836,6 +3833,13 @@ export class AgentSession {
 
 		writeFileSync(filePath, `${lines.join("\n")}\n`);
 		return filePath;
+	}
+
+	private _assertExportAllowed(outputPath: string | undefined): void {
+		if (!this._privacy.clientZdr) return;
+		if (!outputPath || getCwdRelativePath(resolvePath(outputPath), getSessionsDir()) !== undefined) {
+			throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
+		}
 	}
 
 	// =========================================================================

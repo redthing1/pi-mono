@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -35,7 +35,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		}
 	});
 
-	async function createRuntimeHost(extensionFactory: ExtensionFactory) {
+	async function createRuntimeHost(extensionFactory: ExtensionFactory, clientZdr = false) {
 		const tempDir = join(tmpdir(), `pi-runtime-events-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 
@@ -89,6 +89,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 					sessionManager,
 					sessionStartEvent,
 					model: faux.getModel(),
+					privacy: { clientZdr, remoteZdr: false },
 				})),
 				services,
 				diagnostics: services.diagnostics,
@@ -97,7 +98,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		const runtimeHost = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir),
+			sessionManager: clientZdr ? SessionManager.inMemory(tempDir) : SessionManager.create(tempDir),
 		});
 		await runtimeHost.session.bindExtensions({});
 
@@ -109,7 +110,7 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			}
 		});
 
-		return { runtimeHost, faux };
+		return { runtimeHost, faux, tempDir };
 	}
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
@@ -178,6 +179,25 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(result.cancelled).toBe(true);
 		expect(runtimeHost.session.sessionFile).toBe(originalSessionFile);
 		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
+	});
+
+	it("imports client ZDR sessions as detached in-memory state", async () => {
+		const { runtimeHost, tempDir } = await createRuntimeHost(() => {}, true);
+		const imported = SessionManager.create(tempDir, join(tempDir, "imports"));
+		imported.appendMessage({ role: "user", content: "imported", timestamp: 1 });
+		imported.appendMessage(fauxAssistantMessage("reply"));
+		const sourcePath = imported.getSessionFile();
+		expect(sourcePath).toBeTruthy();
+		const sourceContent = readFileSync(sourcePath!, "utf-8");
+
+		const result = await runtimeHost.importFromJsonl(sourcePath!);
+		expect(result).toEqual({ cancelled: false });
+		expect(runtimeHost.session.sessionManager.isPersisted()).toBe(false);
+		expect(runtimeHost.session.sessionFile).toBeUndefined();
+		expect(runtimeHost.session.messages[0]).toEqual({ role: "user", content: "imported", timestamp: 1 });
+
+		runtimeHost.session.sessionManager.appendMessage({ role: "user", content: "continued", timestamp: 2 });
+		expect(readFileSync(sourcePath!, "utf-8")).toBe(sourceContent);
 	});
 
 	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {

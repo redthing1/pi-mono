@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getSessionsDir } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { ZDR_EXPORT_DISABLED_MESSAGE, ZDR_MODEL_REQUIRED_MESSAGE } from "../src/core/privacy.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -92,7 +93,7 @@ describe("zero-data-retention mode", () => {
 		expect(extensionModel && runtime.isZdrModel(extensionModel)).toBe(true);
 	});
 
-	it("keeps client ZDR sessions in memory and rejects unapproved models and exports", async () => {
+	it("keeps client ZDR sessions in memory and requires explicit exports outside the sessions directory", async () => {
 		const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
 		const approved = modelRuntime.getModel("zdr-provider", "approved");
 		const notApproved = modelRuntime.getModel("zdr-provider", "not-approved");
@@ -120,8 +121,18 @@ describe("zero-data-retention mode", () => {
 			expect(session.sessionManager.isPersisted()).toBe(false);
 			expect(session.extensionRunner.createContext().privacy).toEqual({ clientZdr: true, remoteZdr: true });
 			await expect(session.setModel(notApproved!)).rejects.toThrow(ZDR_MODEL_REQUIRED_MESSAGE);
-			expect(() => session.exportToJsonl(join(tempDir, "session.jsonl"))).toThrow(ZDR_EXPORT_DISABLED_MESSAGE);
-			await expect(session.exportToHtml(join(tempDir, "session.html"))).rejects.toThrow(ZDR_EXPORT_DISABLED_MESSAGE);
+
+			const jsonlPath = join(tempDir, "session.jsonl");
+			const htmlPath = join(tempDir, "session.html");
+			expect(session.exportToJsonl(jsonlPath)).toBe(jsonlPath);
+			await expect(session.exportToHtml(htmlPath)).resolves.toBe(htmlPath);
+			expect(existsSync(jsonlPath)).toBe(true);
+			expect(existsSync(htmlPath)).toBe(true);
+
+			expect(() => session.exportToJsonl()).toThrow(ZDR_EXPORT_DISABLED_MESSAGE);
+			expect(() => session.exportToJsonl(join(getSessionsDir(), "session.jsonl"))).toThrow(
+				ZDR_EXPORT_DISABLED_MESSAGE,
+			);
 		} finally {
 			session.dispose();
 		}

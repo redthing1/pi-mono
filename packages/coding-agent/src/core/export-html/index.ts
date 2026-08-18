@@ -241,10 +241,10 @@ export async function exportSessionToHtml(
 	const opts: ExportOptions = typeof options === "string" ? { outputPath: options } : options || {};
 
 	const sessionFile = sm.getSessionFile();
-	if (!sessionFile) {
+	if (!sessionFile && !opts.outputPath) {
 		throw new Error("Cannot export in-memory session to HTML");
 	}
-	if (!existsSync(sessionFile)) {
+	if (sessionFile && !existsSync(sessionFile)) {
 		throw new Error("Nothing to export yet - start a conversation first");
 	}
 
@@ -273,6 +273,7 @@ export async function exportSessionToHtml(
 
 	let outputPath = opts.outputPath ? normalizePath(opts.outputPath) : undefined;
 	if (!outputPath) {
+		if (!sessionFile) throw new Error("Cannot export in-memory session to HTML");
 		const sessionBasename = basename(sessionFile, ".jsonl");
 		outputPath = `${APP_NAME}-session-${sessionBasename}.html`;
 	}

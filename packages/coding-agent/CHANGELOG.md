@@ -8,6 +8,7 @@
 - Added RPC session listing for the current working-directory session group, with client-ZDR enforcement and a focused summary response.
 - Added `--zdr-server` to require server-ZDR-approved models while retaining normal local session persistence.
 - Added a footer indicator for full, client-only, and server-only ZDR modes.
+- Added explicit ZDR session export to a chosen file and detached in-memory JSONL import, with path completion for both commands.
 - Added provider-neutral simple completions to the extension model registry.
 
 ### Changed

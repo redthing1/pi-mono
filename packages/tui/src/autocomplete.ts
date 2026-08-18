@@ -228,6 +228,7 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	pathExtensions?: readonly string[];
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
@@ -305,10 +306,11 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
+		if (textBeforeCursor.startsWith("/")) {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
+				if (options.force) return null;
 				const prefix = textBeforeCursor.slice(1);
 				const commandItems = this.commands.map((cmd) => {
 					const name = "name" in cmd ? cmd.name : cmd.value;
@@ -343,19 +345,32 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				const name = "name" in cmd ? cmd.name : cmd.value;
 				return name === commandName;
 			});
-			if (!command || !("getArgumentCompletions" in command) || !command.getArgumentCompletions) {
-				return null;
+			if (command && "pathExtensions" in command && command.pathExtensions) {
+				const pathExtensions = command.pathExtensions.map((extension) => extension.toLowerCase());
+				const pathSuggestions = this.getFileSuggestions(argumentText).filter(
+					(item) =>
+						item.label.endsWith("/") ||
+						pathExtensions.some((extension) => item.label.toLowerCase().endsWith(extension)),
+				);
+				if (pathSuggestions.length === 0) return null;
+				return { items: pathSuggestions, prefix: argumentText };
 			}
 
-			const argumentSuggestions = await command.getArgumentCompletions(argumentText);
-			if (!Array.isArray(argumentSuggestions) || argumentSuggestions.length === 0) {
-				return null;
-			}
+			if (!options.force) {
+				if (!command || !("getArgumentCompletions" in command) || !command.getArgumentCompletions) {
+					return null;
+				}
 
-			return {
-				items: argumentSuggestions,
-				prefix: argumentText,
-			};
+				const argumentSuggestions = await command.getArgumentCompletions(argumentText);
+				if (!Array.isArray(argumentSuggestions) || argumentSuggestions.length === 0) {
+					return null;
+				}
+
+				return {
+					items: argumentSuggestions,
+					prefix: argumentText,
+				};
+			}
 		}
 
 		const pathMatch = this.extractPathPrefix(textBeforeCursor, options.force ?? false);

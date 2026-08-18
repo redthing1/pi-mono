@@ -31,8 +31,11 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Summarize older context; see [Compaction](compaction.md) |
-| `/export [file]` | Export session to HTML |
+| `/export [file]` | Export session to HTML or JSONL |
+| `/import <file.jsonl>` | Import and resume a JSONL session |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
+
+In client ZDR mode, automatic persistence and managed session browsing remain disabled. Explicit `/export <path>` is allowed only outside pi's sessions directory, and `/import <path.jsonl>` loads detached in memory without copying or modifying the source file.
 
 ## Resuming and Deleting Sessions
 

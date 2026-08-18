@@ -473,6 +473,51 @@ describe("CombinedAutocompleteProvider", () => {
 		});
 	});
 
+	describe("slash command path filtering", () => {
+		let baseDir = "";
+
+		beforeEach(() => {
+			baseDir = mkdtempSync(join(tmpdir(), "pi-autocomplete-"));
+			setupFolder(baseDir, {
+				dirs: ["sessions"],
+				files: {
+					"chat.jsonl": "",
+					"chat.html": "",
+					"notes.txt": "",
+				},
+			});
+		});
+
+		afterEach(() => {
+			rmSync(baseDir, { recursive: true, force: true });
+		});
+
+		test("offers only JSONL files and directories for import", async () => {
+			const provider = new CombinedAutocompleteProvider([{ name: "import", pathExtensions: [".jsonl"] }], baseDir);
+			const line = "/import ";
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
+
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.label),
+				["sessions/", "chat.jsonl"],
+			);
+		});
+
+		test("offers HTML and JSONL files for export", async () => {
+			const provider = new CombinedAutocompleteProvider(
+				[{ name: "export", pathExtensions: [".html", ".jsonl"] }],
+				baseDir,
+			);
+			const line = "/export chat";
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
+
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.label),
+				["chat.html", "chat.jsonl"],
+			);
+		});
+	});
+
 	describe("quoted path completion", () => {
 		let baseDir = "";
 

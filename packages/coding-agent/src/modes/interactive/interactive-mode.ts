@@ -713,6 +713,7 @@ export class InteractiveMode {
 			name: command.name,
 			description: command.description,
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
+			...(command.pathExtensions && { pathExtensions: command.pathExtensions }),
 		}));
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
@@ -5919,10 +5920,6 @@ export class InteractiveMode {
 	}
 
 	private async handleImportCommand(text: string): Promise<void> {
-		if (this.session.privacy.clientZdr) {
-			this.showError("Session import is disabled in ZDR mode.");
-			return;
-		}
 		const inputPath = this.getPathCommandArgument(text, "/import");
 		if (!inputPath) {
 			this.showError("Usage: /import <path.jsonl>");

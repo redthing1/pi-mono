@@ -68,6 +68,22 @@ describe("loadEntriesFromFile", () => {
 		expect(entries[1].type).toBe("message");
 	});
 
+	it("opens a session as detached in-memory state", () => {
+		const file = join(tempDir, "detached.jsonl");
+		const originalContent =
+			'{"type":"session","version":3,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}\n';
+		writeFileSync(file, originalContent);
+
+		const sessionManager = SessionManager.openInMemory(file);
+		expect(sessionManager.isPersisted()).toBe(false);
+		expect(sessionManager.getSessionFile()).toBeUndefined();
+		expect(sessionManager.buildSessionContext().messages).toEqual([{ role: "user", content: "hi", timestamp: 1 }]);
+
+		sessionManager.appendMessage({ role: "user", content: "continued", timestamp: 2 });
+		expect(readFileSync(file, "utf-8")).toBe(originalContent);
+	});
+
 	it("skips malformed lines but keeps valid ones", () => {
 		const file = join(tempDir, "mixed.jsonl");
 		writeFileSync(

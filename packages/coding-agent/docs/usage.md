@@ -133,7 +133,9 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 ## Exporting and Sharing Sessions
 
-Use `/export [file]` to write a session to HTML.
+Use `/export [file]` to write a session to HTML, or specify a `.jsonl` path for JSONL. Use `/import <file.jsonl>` to load a JSONL session.
+
+In client ZDR mode, export requires an explicit path outside pi's sessions directory. Import loads the file as detached in-memory state; it does not copy the file into session storage or append later messages to the source.
 
 Use `/share` to upload a private GitHub gist with a shareable HTML link.
 

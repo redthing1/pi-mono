@@ -1682,6 +1682,20 @@ export class SessionManager {
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+		return SessionManager.openWithPersistence(path, sessionDir, cwdOverride, true);
+	}
+
+	/** Open a session file as detached in-memory state without modifying the source file. */
+	static openInMemory(path: string, cwdOverride?: string): SessionManager {
+		return SessionManager.openWithPersistence(path, undefined, cwdOverride, false);
+	}
+
+	private static openWithPersistence(
+		path: string,
+		sessionDir: string | undefined,
+		cwdOverride: string | undefined,
+		persist: boolean,
+	): SessionManager {
 		const resolvedPath = resolvePath(path);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
@@ -1698,9 +1712,11 @@ export class SessionManager {
 			}
 		}
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
-		// If no sessionDir provided, derive from file's parent directory
-		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
+		// Persistent opens default to the source parent; detached opens have no managed session directory.
+		const dir = persist ? (sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..")) : "";
+		const manager = new SessionManager(cwd, dir, resolvedPath, persist, undefined, preloadedFileEntries);
+		if (!persist) manager.sessionFile = undefined;
+		return manager;
 	}
 
 	/**
