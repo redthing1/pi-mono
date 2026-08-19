@@ -39,7 +39,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { parseStreamingJson } from "../utils/json-parse.ts";
+import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { forcePiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -336,7 +336,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							});
 						}
 					} else {
-						block.arguments = parseStreamingJson(block.partialArgs);
+						try {
+							block.arguments = parseJsonWithRepair(block.partialArgs?.trim() ? block.partialArgs : "{}");
+						} catch {
+							block.arguments = {};
+							block.argumentsParseError = true;
+						}
 					}
 					// Finalize in-place and strip the scratch buffers so replay only
 					// carries parsed arguments.

@@ -97,7 +97,13 @@ describe("pi-ai protocol bridge", () => {
 			content: [
 				{ type: "text", text: "hello" },
 				{ type: "thinking", thinking: "hmm", redacted: false },
-				{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } },
+				{
+					type: "toolCall",
+					id: "call-1",
+					name: "read",
+					arguments: { path: "README.md" },
+					argumentsParseError: true,
+				},
 			],
 			api: "test-api",
 			provider: "test-provider",

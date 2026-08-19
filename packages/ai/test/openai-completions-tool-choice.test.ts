@@ -691,6 +691,56 @@ describe("openai-completions tool_choice", () => {
 		]);
 	});
 
+	it("marks malformed final tool arguments instead of silently finalizing them as an empty object", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-malformed-tool-arguments",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "call_edit",
+									type: "function",
+									function: { name: "edit", arguments: '{"edits": ' },
+								},
+							],
+						},
+						finish_reason: "tool_calls",
+					},
+				],
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Edit a file", timestamp: Date.now() }],
+				tools: [
+					{
+						name: "edit",
+						description: "Edit a file",
+						parameters: Type.Object({ path: Type.String(), edits: Type.Array(Type.Object({})) }),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.content).toEqual([
+			{
+				type: "toolCall",
+				id: "call_edit",
+				name: "edit",
+				arguments: {},
+				argumentsParseError: true,
+			},
+		]);
+	});
+
 	it("coalesces tool call deltas by stable index when provider mutates ids mid-stream", async () => {
 		mockState.chunks = [
 			{
