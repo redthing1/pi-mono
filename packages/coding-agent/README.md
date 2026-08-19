@@ -284,12 +284,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 ### Telemetry and update checks
 
-Pi has two separate startup features:
-
-- **Update check:** disabled in this fork. `PI_SKIP_VERSION_CHECK=1` is retained for upstream compatibility, but startup does not fetch `https://pi.dev/api/latest-version`.
-- **Install/update telemetry:** after first install or a changelog-detected update, sends an anonymous version ping to `https://pi.dev/api/report-install`. This setting also controls optional provider attribution headers for OpenRouter, Cloudflare, and direct NVIDIA NIM requests. Opt out by setting `enableInstallTelemetry` to `false` in `settings.json`, or by setting `PI_TELEMETRY=0`.
-
-Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including install/update telemetry.
+This fork does not report installs or usage, inject automatic attribution or tracking headers, poll for release notifications, or fetch model catalogs from `pi.dev`. `PI_SKIP_VERSION_CHECK=1` is retained for upstream compatibility.
 
 ---
 
@@ -639,9 +634,8 @@ pi --thinking high "Solve this complex problem"
 | `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
-| `PI_OFFLINE` | Disable startup network operations, including install/update telemetry |
+| `PI_OFFLINE` | Disable startup network operations, including provider model refresh |
 | `PI_SKIP_VERSION_CHECK` | Compatibility flag; version polling is disabled in this fork |
-| `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers. Use `1`/`true`/`yes` to enable or `0`/`false`/`no` to disable |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
 | `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
 

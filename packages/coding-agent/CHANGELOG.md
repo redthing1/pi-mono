@@ -19,6 +19,10 @@
 - Fixed hung pi.dev model catalog requests consuming the entire refresh deadline without retrying ([#8198](https://github.com/earendil-works/pi/issues/8198)).
 - Fixed inherited Xiaomi model catalogs listing shut-down MiMo V2 models in `/model` and `--list-models` ([#8187](https://github.com/earendil-works/pi/issues/8187)).
 
+### Removed
+
+- Removed install and usage telemetry, automatic provider attribution headers, and `pi.dev` model-catalog requests.
+
 ## [0.84.2] - 2026-08-14
 
 ### New Features

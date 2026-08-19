@@ -39,3 +39,11 @@ Fresh-clone dependency hydration may download the exact artifacts named by `bun.
 - Send requests only to models explicitly approved with `zdr: true`, including an explicit OpenRouter ZDR route. Never fall back to an unapproved model.
 
 ZDR approval is an explicit operator assertion, not provider-policy discovery. Verify the provider agreement and route before marking a provider or model as ZDR. `--zdr-client` and `--no-session` provide only local ephemeral sessions and make no remote-retention claim. See [the model configuration guide](packages/coding-agent/docs/models.md#zero-data-retention) for configuration.
+
+## No telemetry or vendor phone-home
+
+- Pi runtime must not send install, update, usage, analytics, crash, or diagnostic telemetry.
+- Pi runtime must not automatically contact project-controlled services for version checks, model catalogs, or similar background requests.
+- Pi must not inject project attribution, tracking identifiers, or local session identifiers into provider requests.
+- User-requested provider, OAuth, sharing, and operator-configured endpoint traffic remains allowed. Generic tracing interfaces must stay passive, explicitly host-provided, and no-op by default.
+- Revalidate these guarantees during upstream integration and preserve them with focused contract tests.
