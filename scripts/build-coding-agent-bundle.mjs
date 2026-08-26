@@ -82,7 +82,14 @@ function validateExternalImports(metafiles) {
 	for (const metafile of metafiles) {
 		for (const input of Object.values(metafile.inputs)) {
 			for (const imported of input.imports) {
-				if (!imported.external || isBuiltin(imported.path) || allowedExternalPackages.has(imported.path)) {
+				// `node:` is a runtime-owned namespace even when Bun's built-in catalog
+				// lags the Node version targeted by this bundle (for example node:sqlite).
+				if (
+					!imported.external ||
+					imported.path.startsWith("node:") ||
+					isBuiltin(imported.path) ||
+					allowedExternalPackages.has(imported.path)
+				) {
 					continue;
 				}
 				unexpected.add(imported.path);
