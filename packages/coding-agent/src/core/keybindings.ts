@@ -9,6 +9,7 @@ import {
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../config.ts";
+import { stripBom } from "../utils/text.ts";
 
 export interface AppKeybindings {
 	"app.interrupt": true;
@@ -16,9 +17,11 @@ export interface AppKeybindings {
 	"app.exit": true;
 	"app.suspend": true;
 	"app.thinking.cycle": true;
+	"app.thinking.setDefault": true;
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
+	"app.model.setDefault": true;
 	"app.tools.expand": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
@@ -59,14 +62,38 @@ export interface AppKeybindings {
 
 export type AppKeybinding = keyof AppKeybindings;
 
+export function useWindowsKeybindings(
+	platform: NodeJS.Platform = process.platform,
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	return platform === "win32" || (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
+}
+
 declare module "@earendil-works/pi-tui" {
 	interface Keybindings extends AppKeybindings {}
 }
 
 const IS_TMUX_SESSION = process.env.TMUX !== undefined || process.env.TMUX_PANE !== undefined;
+const windowsKeybindings = useWindowsKeybindings();
 
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
+	"tui.editor.undo": {
+		...TUI_KEYBINDINGS["tui.editor.undo"],
+		defaultKeys: process.platform === "win32" ? "ctrl+z" : windowsKeybindings ? "alt+z" : "ctrl+-",
+	},
+	"tui.altScreen.previousPrompt": {
+		...TUI_KEYBINDINGS["tui.altScreen.previousPrompt"],
+		defaultKeys: windowsKeybindings ? "ctrl+up" : ["ctrl+shift+up", "ctrl+up"],
+	},
+	"tui.altScreen.nextPrompt": {
+		...TUI_KEYBINDINGS["tui.altScreen.nextPrompt"],
+		defaultKeys: windowsKeybindings ? "ctrl+down" : ["ctrl+shift+down", "ctrl+down"],
+	},
+	"tui.altScreen.search": {
+		...TUI_KEYBINDINGS["tui.altScreen.search"],
+		defaultKeys: windowsKeybindings ? "ctrl+f" : "ctrl+shift+f",
+	},
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
@@ -78,15 +105,20 @@ export const KEYBINDINGS = {
 		defaultKeys: "shift+tab",
 		description: "Cycle thinking level",
 	},
+	"app.thinking.setDefault": {
+		defaultKeys: "ctrl+s",
+		description: "Set default thinking level",
+	},
 	"app.model.cycleForward": {
 		defaultKeys: "ctrl+p",
 		description: "Cycle to next model",
 	},
 	"app.model.cycleBackward": {
-		defaultKeys: "shift+ctrl+p",
+		defaultKeys: windowsKeybindings ? "alt+p" : "shift+ctrl+p",
 		description: "Cycle to previous model",
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
+	"app.model.setDefault": { defaultKeys: "ctrl+s", description: "Set default model" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
@@ -105,15 +137,15 @@ export const KEYBINDINGS = {
 		description: "Copy message to clipboard",
 	},
 	"app.message.followUp": {
-		defaultKeys: "alt+enter",
+		defaultKeys: windowsKeybindings ? "ctrl+q" : "alt+enter",
 		description: "Queue follow-up message",
 	},
 	"app.message.dequeue": {
-		defaultKeys: IS_TMUX_SESSION ? "shift+left" : "alt+up",
-		description: "Edit last queued message",
+		defaultKeys: windowsKeybindings ? "alt+q" : IS_TMUX_SESSION ? "shift+left" : "alt+up",
+		description: "Restore queued messages",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",
+		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
 		description: "Paste image from clipboard (text fallback)",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },
@@ -341,7 +373,7 @@ function orderKeybindingsConfig(config: Record<string, unknown>): Record<string,
 function loadRawConfig(path: string): Record<string, unknown> | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
-		const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+		const parsed = JSON.parse(stripBom(readFileSync(path, "utf-8"))) as unknown;
 		if (typeof parsed !== "object" || parsed === null) return undefined;
 		return parsed as Record<string, unknown>;
 	} catch {

@@ -7,6 +7,7 @@
 
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
@@ -62,6 +63,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -96,16 +98,6 @@ async function readPipedStdin(): Promise<string | undefined> {
 		});
 		process.stdin.resume();
 	});
-}
-
-function collectSettingsDiagnostics(
-	settingsManager: SettingsManager,
-	context: string,
-): AgentSessionRuntimeDiagnostic[] {
-	return settingsManager.drainErrors().map(({ scope, error }) => ({
-		type: "warning",
-		message: `(${context}, ${scope} settings) ${error.message}`,
-	}));
 }
 
 function reportDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
@@ -619,7 +611,6 @@ export async function main(args: string[], options?: MainOptions) {
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
-
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
@@ -695,7 +686,7 @@ export async function main(args: string[], options?: MainOptions) {
 	time("runMigrations");
 
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
-	reportDiagnostics(collectSettingsDiagnostics(startupSettingsManager, "startup session lookup"));
+	const startupSettingsDiagnostics = collectSettingsDiagnostics(startupSettingsManager);
 
 	// Experimental first-time setup: theme choice.
 	// Runs before any runtime services are created so the chosen settings apply everywhere.
@@ -824,7 +815,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...projectTrustDiagnostics,
 			...services.diagnostics,
-			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
+			...collectSettingsDiagnostics(settingsManager),
 			...resourceLoader.getExtensions().extensions.flatMap((extension) =>
 				(extension.startupErrors ?? []).map((message) => ({
 					type: "error" as const,
@@ -954,10 +945,12 @@ export async function main(args: string[], options?: MainOptions) {
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
+	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 
 	if (parsed.help) {
+		reportDiagnostics(startupSettingsDiagnostics);
 		const extensionFlags = resourceLoader
 			.getExtensions()
 			.extensions.flatMap((extension) => Array.from(extension.flags.values()));
@@ -966,17 +959,10 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (parsed.listModels !== undefined) {
+		reportDiagnostics(startupSettingsDiagnostics);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await listModels(modelRuntime, searchPattern, AbortSignal.timeout(15_000));
 		process.exit(0);
-	}
-
-	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
-		reportDiagnostics(runtime.diagnostics);
-		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
-			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
-		}
-		process.exit(1);
 	}
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
@@ -1004,7 +990,17 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	time("resolveModelScope");
-	reportDiagnostics(runtime.diagnostics);
+	const startupDiagnostics = deduplicateDiagnostics([...startupSettingsDiagnostics, ...runtime.diagnostics]);
+	const hasRuntimeErrors = runtime.diagnostics.some((diagnostic) => diagnostic.type === "error");
+	if (appMode !== "interactive" || hasRuntimeErrors) {
+		reportDiagnostics(startupDiagnostics);
+	}
+	if (hasRuntimeErrors) {
+		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
+			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
+		}
+		process.exit(1);
+	}
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {
@@ -1020,22 +1016,13 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
-	if (!offlineMode && appMode === "rpc") {
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), 15_000);
-		void modelRuntime
-			.refresh({ signal: controller.signal })
-			.catch(() => {})
-			.finally(() => clearTimeout(timeout));
-	}
-
 	if (appMode === "rpc") {
 		printTimings();
 		await runRpcMode(runtime);
 	} else if (appMode === "interactive") {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
+			startupDiagnostics,
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
 			initialMessage,

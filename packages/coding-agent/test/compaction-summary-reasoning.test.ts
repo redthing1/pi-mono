@@ -112,13 +112,13 @@ describe("generateSummary reasoning options", () => {
 		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
 		expect(requestOptions).toHaveLength(2);
 		expect(requestOptions.every((options) => options?.cacheRetention === "none")).toBe(true);
-		expect(requestOptions.every((options) => options?.toolChoice === "none")).toBe(true);
+		expect(requestOptions.every((options) => options?.toolChoice === undefined)).toBe(true);
 
 		const sessionIds = requestOptions.map((options) => options?.sessionId);
 		expect(sessionIds[0]).not.toBe(sessionIds[1]);
 	});
 
-	it("honors caller-supplied cache retention and routing", async () => {
+	it("honors caller-supplied routing session and tool choice without prompt caching", async () => {
 		await completeSummarization(
 			createModel(false),
 			{ systemPrompt: "Summarize", messages: [] },
@@ -127,8 +127,8 @@ describe("generateSummary reasoning options", () => {
 
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			sessionId: "current-routing-session",
-			cacheRetention: "long",
-			toolChoice: "none",
+			cacheRetention: "none",
+			toolChoice: "auto",
 		});
 	});
 
@@ -151,227 +151,37 @@ describe("generateSummary reasoning options", () => {
 		expect(prompt).toContain("<conversation>");
 	});
 
-	it("appends instructions to a cache-friendly source context", async () => {
-		const sourceContext: Context = {
-			systemPrompt: "You are a coding agent.",
-			messages: [{ role: "user", content: "Previous summary and original request", timestamp: 1 }],
-			tools: [],
-		};
-		const onPayload = async (payload: unknown) => payload;
-		const onResponse = async () => {};
-		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
-			messagesToSummarize: messages,
-			turnPrefixMessages: [],
-			isSplitTurn: false,
-			tokensBefore: 100,
-			previousSummary: "Previous summary",
-			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
-		};
-
-		await compact(
-			preparation,
-			createModel(false),
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{
-				sourceContext,
-				requestOptions: {
-					sessionId: "routing-session",
-					onPayload,
-					onResponse,
-					transport: "websocket",
-					thinkingBudgets: { low: 1234 },
-					maxRetryDelayMs: 4321,
-				},
-			},
-		);
-
-		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
-		expect(requestContext.systemPrompt).toBe(sourceContext.systemPrompt);
-		expect(requestContext.tools).toBe(sourceContext.tools);
-		expect(requestContext.messages.slice(0, -1)).toEqual(sourceContext.messages);
-		const instruction = JSON.stringify(requestContext.messages.at(-1));
-		expect(instruction).toContain("existing structured summary of earlier conversation history");
-		expect(instruction).toContain("PRESERVE all existing information from the previous summary");
-		expect(instruction).not.toContain("<conversation>");
-		expect(instruction).not.toContain("<previous-summary>");
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			cacheRetention: "short",
-			sessionId: "routing-session",
-			toolChoice: "none",
-			transport: "websocket",
-			thinkingBudgets: { low: 1234 },
-			maxRetryDelayMs: 4321,
+	it("rejects a length-limited history summary", async () => {
+		completeSimpleMock.mockResolvedValueOnce({
+			...mockSummaryResponse,
+			stopReason: "length",
+			content: [{ type: "text", text: "partial" }],
 		});
-		expect(completeSimpleMock.mock.calls[0][2]?.onPayload).toBe(onPayload);
-		expect(completeSimpleMock.mock.calls[0][2]?.onResponse).toBe(onResponse);
-		expect(sourceContext.messages).toHaveLength(1);
-	});
 
-	it("falls back to standalone summarization when a cache-friendly source cannot leave the summary budget", async () => {
-		const oversizedToolResult: AgentMessage = {
-			role: "toolResult",
-			toolCallId: "tool-call-1",
-			toolName: "read",
-			content: [{ type: "text", text: "x".repeat(800_000) }],
-			isError: false,
-			timestamp: 1,
-		};
-		const sourceContext: Context = {
-			systemPrompt: "You are a coding agent.",
-			messages: [oversizedToolResult],
-			tools: [],
-		};
-		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
-			messagesToSummarize: [oversizedToolResult],
-			turnPrefixMessages: [],
-			isSplitTurn: false,
-			tokensBefore: 250_000,
-			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
-		};
-
-		await compact(
-			preparation,
-			createModel(false),
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ sourceContext, requestOptions: { sessionId: "routing-session" } },
+		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
+			"generation hit the token cap",
 		);
-
-		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
-		const prompt = JSON.stringify(requestContext.messages);
-		expect(requestContext.systemPrompt).not.toBe(sourceContext.systemPrompt);
-		expect(requestContext.tools).toBeUndefined();
-		expect(prompt).toContain("<conversation>");
-		expect(prompt).toContain("more characters truncated");
-		expect(prompt).not.toContain("x".repeat(3000));
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ cacheRetention: "none", toolChoice: "none" });
-		expect(completeSimpleMock.mock.calls[0][2]?.sessionId).not.toBe("routing-session");
 	});
 
-	it("falls back to standalone summarization for an oversized split-turn source", async () => {
-		const splitUser = { role: "user" as const, content: "Large final request", timestamp: 1 };
-		const oversizedToolResult: AgentMessage = {
-			role: "toolResult",
-			toolCallId: "tool-call-1",
-			toolName: "read",
-			content: [{ type: "text", text: "x".repeat(800_000) }],
-			isError: false,
-			timestamp: 2,
-		};
-		const turnPrefixSourceContext: Context = {
-			systemPrompt: "You are a coding agent.",
-			messages: [splitUser, oversizedToolResult],
-			tools: [],
-		};
+	it("rejects a length-limited split-turn summary", async () => {
+		completeSimpleMock.mockResolvedValueOnce({
+			...mockSummaryResponse,
+			stopReason: "length",
+			content: [{ type: "text", text: "partial" }],
+		});
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
-			turnPrefixMessages: [splitUser, oversizedToolResult],
-			isSplitTurn: true,
-			tokensBefore: 250_000,
-			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
-		};
-
-		await compact(
-			preparation,
-			createModel(false),
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ turnPrefixSourceContext, requestOptions: { sessionId: "routing-session" } },
-		);
-
-		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
-		const prompt = JSON.stringify(requestContext.messages);
-		expect(requestContext.systemPrompt).not.toBe(turnPrefixSourceContext.systemPrompt);
-		expect(requestContext.tools).toBeUndefined();
-		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
-		expect(prompt).toContain("more characters truncated");
-		expect(prompt).not.toContain("source conversation may also contain complete earlier turns");
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ cacheRetention: "none", toolChoice: "none" });
-		expect(completeSimpleMock.mock.calls[0][2]?.sessionId).not.toBe("routing-session");
-	});
-
-	it("limits a cache-friendly split-turn summary to the final incomplete turn", async () => {
-		const earlierUser = { role: "user" as const, content: "Earlier request", timestamp: 1 };
-		const earlierAssistant: AssistantMessage = {
-			...mockSummaryResponse,
-			content: [{ type: "text", text: "Earlier work completed" }],
-			timestamp: 2,
-		};
-		const splitUser = { role: "user" as const, content: "Large final request", timestamp: 3 };
-		const earlyAssistant: AssistantMessage = {
-			...mockSummaryResponse,
-			content: [{ type: "text", text: "Early work in final turn" }],
-			timestamp: 4,
-		};
-		const turnPrefixSourceContext: Context = {
-			systemPrompt: "You are a coding agent.",
-			messages: [earlierUser, earlierAssistant, splitUser, earlyAssistant],
-			tools: [],
-		};
-		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
-			messagesToSummarize: [],
-			turnPrefixMessages: [splitUser, earlyAssistant],
+			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		await compact(
-			preparation,
-			createModel(false),
-			"test-key",
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{ turnPrefixSourceContext },
+		await expect(compact(preparation, createModel(false), "test-key")).rejects.toThrow(
+			"generation hit the token cap",
 		);
-
-		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
-		expect(requestContext.messages.slice(0, -1)).toEqual(turnPrefixSourceContext.messages);
-		const instruction = JSON.stringify(requestContext.messages.at(-1));
-		expect(instruction).toContain("Summarize only the final, incomplete turn");
-		expect(instruction).toContain("last user-role request before this instruction");
-		expect(instruction).toContain("Do not summarize earlier turns");
-		expect(instruction).not.toContain("Earlier request");
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			cacheRetention: "short",
-			toolChoice: "none",
-		});
 	});
 
 	it("rejects tool calls from conversation summaries", async () => {
@@ -489,25 +299,33 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("sets Anthropic refusal fallback from model metadata", async () => {
+	it("limits Anthropic summary refusal fallback to the primary permitted model", async () => {
+		const fallbackCost = { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 };
 		await generateSummary(
 			messages,
-			createModel(true, 8192, { allowedFallbackModels: ["claude-opus-4-8", "claude-opus-5"] }),
+			createModel(true, 8192, {
+				allowedFallbackModels: [
+					{ provider: "anthropic", model: "claude-opus-4-8", cost: fallbackCost },
+					{ provider: "anthropic", model: "claude-opus-5", cost: fallbackCost },
+				],
+			}),
 			2000,
 			"test-key",
 		);
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			refusalFallbacks: [{ model: "claude-opus-4-8" }],
+		expect(completeSimpleMock.mock.calls[0][0]).toMatchObject({
+			compat: {
+				allowedFallbackModels: [{ provider: "anthropic", model: "claude-opus-4-8", cost: fallbackCost }],
+			},
 		});
 	});
 
-	it("does not set Anthropic refusal fallback for models without allowed fallback targets", async () => {
+	it("does not add Anthropic refusal fallback metadata when the model has no targets", async () => {
 		await generateSummary(messages, createModel(true), 2000, "test-key");
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("refusalFallbacks");
+		expect(completeSimpleMock.mock.calls[0][0]).not.toHaveProperty("compat");
 	});
 
 	it("clamps compaction summary maxTokens to the model output cap", async () => {

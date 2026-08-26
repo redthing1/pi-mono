@@ -109,6 +109,7 @@ describe("Mistral HTTP transport", () => {
 		expect(headers.get("accept")).toBe("text/event-stream");
 		expect(headers.get("x-affinity")).toBe("session-1");
 		expect(headers.get("x-custom")).toBe("value");
+		expect(headers.get("user-agent")).toBeNull();
 		expect(callbackPayload?.maxTokens).toBe(123);
 		expect(callbackPayload?.promptMode).toBe("reasoning");
 		expect(callbackPayload?.promptCacheKey).toBe("session-1");
@@ -356,11 +357,12 @@ describe("Mistral HTTP transport", () => {
 			apiKey: "request-key",
 			fetch,
 			sessionId: "automatic-affinity",
-			headers: { authorization: null, "x-affinity": null },
+			headers: { authorization: null, "x-affinity": null, "User-Agent": "custom-agent" },
 		}).result();
 
 		expect(requestHeaders?.has("authorization")).toBe(false);
 		expect(requestHeaders?.has("x-affinity")).toBe(false);
+		expect(requestHeaders?.get("user-agent")).toBe("custom-agent");
 	});
 
 	it("aborts while waiting for an SSE chunk", async () => {
@@ -408,7 +410,7 @@ describe("Mistral HTTP transport", () => {
 		}).result();
 
 		expect(message.stopReason).toBe("error");
-		expect(message.errorMessage).toMatch(/timeout/i);
+		expect(message.errorMessage).toMatch(/timed out|timeout/i);
 	});
 
 	it("preserves HTTP status and response bodies in errors", async () => {

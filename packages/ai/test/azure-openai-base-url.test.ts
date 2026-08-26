@@ -92,6 +92,17 @@ async function captureClientBaseUrl(baseUrl: string): Promise<string> {
 	return azureMock.constructorCalls[0].baseURL;
 }
 
+async function captureClientHeaders(headers?: Record<string, string>): Promise<Record<string, string>> {
+	const model = getModel("azure-openai-responses", "gpt-4o-mini");
+	await streamAzureOpenAIResponses(model, context, {
+		apiKey: "test-api-key",
+		azureBaseUrl: "https://my-resource.openai.azure.com",
+		headers,
+	}).result();
+	expect(azureMock.constructorCalls).toHaveLength(1);
+	return azureMock.constructorCalls[0].defaultHeaders ?? {};
+}
+
 describe("azure-openai-responses base URL normalization", () => {
 	it("normalizes Cognitive Services root endpoints to /openai/v1", async () => {
 		const baseURL = await captureClientBaseUrl("https://marc-quicktests-resource.cognitiveservices.azure.com");
@@ -199,5 +210,15 @@ describe("azure-openai-responses base URL normalization", () => {
 		await streamAzureOpenAIResponses(model, context, { apiKey: "test-api-key" }).result();
 		expect(azureMock.constructorCalls).toHaveLength(1);
 		expect(azureMock.constructorCalls[0].baseURL).toBe("https://my-resource.openai.azure.com/openai/v1");
+	});
+});
+
+describe("azure-openai-responses user agent", () => {
+	it("does not identify pi by default", async () => {
+		expect((await captureClientHeaders())["User-Agent"]).toBeUndefined();
+	});
+
+	it("lets explicit headers override the default User-Agent", async () => {
+		expect((await captureClientHeaders({ "User-Agent": "custom-agent" }))["User-Agent"]).toBe("custom-agent");
 	});
 });

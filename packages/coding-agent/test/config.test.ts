@@ -1,7 +1,10 @@
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	detectInstallMethod,
+	findNodePackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
@@ -9,6 +12,7 @@ import {
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 const originalPiPackageDir = process.env.PI_PACKAGE_DIR;
+let tempDir: string | undefined;
 
 function setExecPath(value: string): void {
 	Object.defineProperty(process, "execPath", {
@@ -26,8 +30,24 @@ afterEach(() => {
 	} else {
 		process.env.PI_PACKAGE_DIR = originalPiPackageDir;
 	}
+	if (tempDir) {
+		rmSync(tempDir, { recursive: true, force: true });
+		tempDir = undefined;
+	}
 });
 
+describe("findNodePackageDir", () => {
+	test("skips binary metadata copied into dist", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-package-dir-"));
+		const distDir = join(tempDir, "dist");
+		const bundleDir = join(distDir, "bundle");
+		mkdirSync(bundleDir, { recursive: true });
+		writeFileSync(join(tempDir, "package.json"), "{}");
+		writeFileSync(join(distDir, "package.json"), "{}");
+
+		expect(findNodePackageDir(bundleDir)).toBe(tempDir);
+	});
+});
 describe("detectInstallMethod", () => {
 	test("detects pnpm from Windows .pnpm install paths", () => {
 		setExecPath(

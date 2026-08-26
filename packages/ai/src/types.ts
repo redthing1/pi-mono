@@ -215,6 +215,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	sessionId?: string;
 	/**
+	 * Whether providers may route the request to model-declared fallback models.
+	 * Defaults to true. Set to false when the selected model is the request's
+	 * security or privacy boundary.
+	 */
+	allowModelFallbacks?: boolean;
+	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
 	 * stream idleness after connection uses timeoutMs.
@@ -310,15 +316,17 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
-export type AnthropicRefusalFallback = "default" | readonly { model: string }[];
+export interface AnthropicAllowedFallbackModel {
+	provider: ProviderId;
+	model: string;
+	cost: ModelCost;
+}
 
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
-	/** Provider-neutral tool selection for simple requests. Default: "auto". */
+	/** Provider-neutral tool selection for simple requests. When omitted, adapters use provider-specific behavior. */
 	toolChoice?: ToolChoice;
 	reasoning?: ThinkingLevel;
-	/** Anthropic server-side fallback for eligible refusal stop reasons. Anthropic providers only. */
-	refusalFallbacks?: AnthropicRefusalFallback;
 	/** Ask a capable provider to return a durable handle and continue the request asynchronously. */
 	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
 	/** Custom token budgets for thinking levels (token-based providers only) */
@@ -360,7 +368,7 @@ export interface TextContent {
 export interface ThinkingContent {
 	type: "thinking";
 	thinking: string;
-	thinkingSignature?: string; // e.g., for OpenAI responses, the reasoning item ID
+	thinkingSignature?: string; // Provider-specific opaque or serialized reasoning replay data
 	/** When true, the thinking content was redacted by safety filters. The opaque
 	 *  encrypted payload is stored in `thinkingSignature` so it can be passed back
 	 *  to the API for multi-turn continuity. */
@@ -699,11 +707,12 @@ export interface AnthropicMessagesCompat {
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
 	/**
-	 * Model ids Anthropic accepts in `fallbacks` for server-side refusal fallback.
-	 * When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
-	 * field for models with no permitted fallback targets.
+	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
+	 * with local pricing metadata for returned fallback responses. When absent or
+	 * empty, callers must omit `fallbacks`; Anthropic rejects the field for models
+	 * with no permitted fallback targets.
 	 */
-	allowedFallbackModels?: string[];
+	allowedFallbackModels?: AnthropicAllowedFallbackModel[];
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models

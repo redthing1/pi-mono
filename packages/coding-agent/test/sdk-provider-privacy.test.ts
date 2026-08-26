@@ -6,7 +6,6 @@ import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	type Model,
-	type ProviderHeaders,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -71,14 +70,15 @@ describe("createAgentSession provider privacy", () => {
 		return stream;
 	}
 
-	async function captureHeaders(
+	async function captureProviderOptions(
 		model: Model<Api>,
 		options: {
 			providerHeaders?: Record<string, string>;
 			requestHeaders?: Record<string, string>;
 			sessionId?: string;
+			remoteZdr?: boolean;
 		} = {},
-	): Promise<ProviderHeaders | undefined> {
+	): Promise<SimpleStreamOptions | undefined> {
 		const settingsManager = SettingsManager.create(cwd, agentDir);
 		const authStorage = AuthStorage.inMemory({
 			[model.provider]: { type: "api_key", key: "test-api-key" },
@@ -105,6 +105,7 @@ describe("createAgentSession provider privacy", () => {
 			modelRuntime,
 			settingsManager,
 			sessionManager,
+			privacy: { remoteZdr: options.remoteZdr },
 		});
 
 		try {
@@ -117,7 +118,7 @@ describe("createAgentSession provider privacy", () => {
 				},
 			);
 			await stream.result();
-			return capturedOptions?.headers;
+			return capturedOptions;
 		} finally {
 			session.dispose();
 			modelRegistry.unregisterProvider(model.provider);
@@ -129,7 +130,7 @@ describe("createAgentSession provider privacy", () => {
 		["nvidia", "https://integrate.api.nvidia.com/v1"],
 		["cloudflare-ai-gateway", "https://gateway.ai.cloudflare.com/v1/example"],
 	])("does not add attribution headers for %s", async (provider, baseUrl) => {
-		const headers = await captureHeaders(createModel(provider, baseUrl));
+		const headers = (await captureProviderOptions(createModel(provider, baseUrl)))?.headers;
 
 		expect(headers?.["HTTP-Referer"]).toBeUndefined();
 		expect(headers?.["X-OpenRouter-Title"]).toBeUndefined();
@@ -139,24 +140,74 @@ describe("createAgentSession provider privacy", () => {
 	});
 
 	it("does not send the local session identifier to OpenCode", async () => {
-		const headers = await captureHeaders(createModel("opencode", "https://opencode.ai/zen/v1"), {
-			sessionId: "local-session-id",
-		});
+		const headers = (
+			await captureProviderOptions(createModel("opencode", "https://opencode.ai/zen/v1"), {
+				sessionId: "local-session-id",
+			})
+		)?.headers;
 
 		expect(headers?.["x-opencode-session"]).toBeUndefined();
 		expect(headers?.["x-opencode-client"]).toBeUndefined();
 	});
 
-	it("preserves explicitly configured headers", async () => {
-		const headers = await captureHeaders(createModel("openrouter", "https://openrouter.ai/api/v1"), {
-			providerHeaders: { "X-Provider": "provider", "X-Override": "provider" },
-			requestHeaders: { "X-Request": "request", "X-Override": "request" },
+	it("uses an ephemeral provider routing ID instead of the durable local session ID", async () => {
+		const model = createModel("capture-provider", "https://example.invalid");
+		const settingsManager = SettingsManager.create(cwd, agentDir);
+		const authStorage = AuthStorage.inMemory({
+			[model.provider]: { type: "api_key", key: "test-api-key" },
 		});
+		const modelRegistry = await createInMemoryModelRegistry(authStorage);
+		let capturedOptions: SimpleStreamOptions | undefined;
+		modelRegistry.registerProvider(model.provider, {
+			api: model.api,
+			streamSimple: (_model, _context, providerOptions) => {
+				capturedOptions = providerOptions;
+				return createDoneStream();
+			},
+		});
+		const sessionManager = SessionManager.inMemory(cwd);
+		sessionManager.newSession({ id: "durable-local-session-id" });
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager,
+			sessionManager,
+		});
+
+		try {
+			await session.prompt("privacy test");
+			expect(session.sessionId).toBe("durable-local-session-id");
+			expect(session.agent.sessionId).toBeDefined();
+			expect(session.agent.sessionId).not.toBe(session.sessionId);
+			expect(capturedOptions?.sessionId).toBe(session.agent.sessionId);
+			expect(capturedOptions?.sessionId).not.toBe(session.sessionId);
+		} finally {
+			session.dispose();
+			modelRegistry.unregisterProvider(model.provider);
+		}
+	});
+
+	it("preserves explicitly configured headers", async () => {
+		const headers = (
+			await captureProviderOptions(createModel("openrouter", "https://openrouter.ai/api/v1"), {
+				providerHeaders: { "X-Provider": "provider", "X-Override": "provider" },
+				requestHeaders: { "X-Request": "request", "X-Override": "request" },
+			})
+		)?.headers;
 
 		expect(headers).toEqual({
 			"X-Provider": "provider",
 			"X-Request": "request",
 			"X-Override": "request",
 		});
+	});
+
+	it("disables provider-side model fallback routing in remote-ZDR mode", async () => {
+		const model = { ...createModel("capture-provider", "https://example.invalid"), zdr: true };
+		const options = await captureProviderOptions(model, { remoteZdr: true });
+
+		expect(options?.allowModelFallbacks).toBe(false);
 	});
 });

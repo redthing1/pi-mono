@@ -39,6 +39,7 @@ export function buildBaseOptions(
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
 		sessionId: options?.sessionId,
+		allowModelFallbacks: options?.allowModelFallbacks,
 		headers: options?.headers,
 		onPayload: options?.onPayload,
 		onStreamMetadata: options?.onStreamMetadata,

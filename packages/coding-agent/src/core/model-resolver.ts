@@ -656,6 +656,7 @@ export async function findInitialModel(options: {
 	defaultProvider?: string;
 	defaultModelId?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	modelThinkingLevels?: Record<string, ThinkingLevel>;
 	modelRuntime: ModelRuntime;
 	/** Additional session-specific eligibility constraint. */
 	modelFilter?: (model: Model<Api>) => boolean;
@@ -669,6 +670,7 @@ export async function findInitialModel(options: {
 		defaultProvider,
 		defaultModelId,
 		defaultThinkingLevel,
+		modelThinkingLevels,
 		modelRuntime,
 		modelFilter,
 	} = options;
@@ -701,9 +703,11 @@ export async function findInitialModel(options: {
 		? scopedCandidates.filter((scoped) => modelFilter(scoped.model))
 		: scopedCandidates;
 	if (eligibleScopedCandidates.length > 0 && !isContinuing) {
+		const scopedModel = eligibleScopedCandidates[0];
+		const perModel = modelThinkingLevels?.[`${scopedModel.model.provider}/${scopedModel.model.id}`];
 		return {
-			model: eligibleScopedCandidates[0].model,
-			thinkingLevel: eligibleScopedCandidates[0].thinkingLevel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
+			model: scopedModel.model,
+			thinkingLevel: scopedModel.thinkingLevel ?? perModel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
 			fallbackMessage: undefined,
 		};
 	}
@@ -713,7 +717,10 @@ export async function findInitialModel(options: {
 		const found = modelRuntime.getModel(defaultProvider, defaultModelId);
 		if (found && modelRuntime.hasConfiguredAuth(found.provider) && (!modelFilter || modelFilter(found))) {
 			model = found;
-			if (defaultThinkingLevel) {
+			const perModel = modelThinkingLevels?.[`${defaultProvider}/${defaultModelId}`];
+			if (perModel) {
+				thinkingLevel = perModel;
+			} else if (defaultThinkingLevel) {
 				thinkingLevel = defaultThinkingLevel;
 			}
 			return { model, thinkingLevel, fallbackMessage: undefined };

@@ -816,14 +816,19 @@ export class ExtensionRunner {
 		event: SessionCompactionCheckEvent,
 	): Promise<SessionCompactionCheckResult | undefined> {
 		const ctx = this.createContext();
-		const snapshot: SessionCompactionCheckEvent = {
+		const messages = [...event.context.messages];
+		const tools = event.context.tools ? [...event.context.tools] : undefined;
+		Object.freeze(messages);
+		if (tools) Object.freeze(tools);
+		const context = Object.freeze({
+			...event.context,
+			messages,
+			...(tools ? { tools } : {}),
+		});
+		const snapshot: SessionCompactionCheckEvent = Object.freeze({
 			...event,
-			context: {
-				...event.context,
-				messages: [...event.context.messages],
-				tools: event.context.tools ? [...event.context.tools] : undefined,
-			},
-		};
+			context,
+		});
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("session_compaction_check");

@@ -20,7 +20,7 @@ Pi has two summarization mechanisms:
 | Compaction | Context exceeds threshold, or `/compact` | Summarize old messages to free up context |
 | Branch summarization | `/tree` navigation | Preserve context when switching branches |
 
-Both use the same structured summary format and track file operations cumulatively. Compaction and branch-summary requests use fresh routing session IDs and, where supported by the provider, disable prompt-cache writes because these one-off prompts are unlikely to be reused.
+Both use the same structured summary format and track file operations cumulatively. Compaction reuses the active runtime's opaque routing ID, while branch summaries use a fresh routing ID; neither exposes the durable local session ID. Where supported by the provider, both disable prompt-cache writes because these one-off prompts are unlikely to be reused.
 
 ## Compaction
 
@@ -281,9 +281,7 @@ pi.on("session_before_compact", async (event, ctx) => {
   const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
 
   // preparation.messagesToSummarize - messages to summarize
-  // preparation.sourceMessages - optional active-context history prefix, including any previous summary
   // preparation.turnPrefixMessages - split turn prefix (if isSplitTurn)
-  // preparation.turnPrefixSourceMessages - optional active-context prefix through the split turn
   // preparation.previousSummary - previous compaction summary
   // preparation.fileOps - extracted file operations
   // preparation.tokensBefore - context tokens before compaction

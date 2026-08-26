@@ -356,6 +356,7 @@ describe("AgentSession compaction characterization", () => {
 	it("passes the exact threshold inference context to the summary handler", async () => {
 		let triggerContext: Readonly<Context> | undefined;
 		let sourceContext: Readonly<Context> | undefined;
+		let providerSessionId: string | undefined;
 		const harness = await createHarness({
 			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
@@ -366,6 +367,7 @@ describe("AgentSession compaction characterization", () => {
 					});
 					pi.on("session_before_compact", (event) => {
 						sourceContext = event.sourceContext;
+						providerSessionId = event.providerSessionId;
 						return {
 							compaction: {
 								summary: "exact source checkpoint",
@@ -378,14 +380,20 @@ describe("AgentSession compaction characterization", () => {
 			],
 		});
 		harnesses.push(harness);
+		harness.session.agent.sessionId = "provider-routing-session";
 		seedCompactableSession(harness);
 		harness.setResponses([fauxAssistantMessage("continued")]);
 
 		await harness.session.prompt("pending request");
 
 		expect(sourceContext).toEqual(triggerContext);
+		expect(Object.isFrozen(triggerContext)).toBe(true);
+		expect(Object.isFrozen(triggerContext?.messages)).toBe(true);
+		expect(Object.isFrozen(triggerContext?.tools)).toBe(true);
 		expect(Object.isFrozen(sourceContext)).toBe(true);
 		expect(Object.isFrozen(sourceContext?.messages)).toBe(true);
+		expect(providerSessionId).toBe(harness.session.agent.sessionId);
+		expect(providerSessionId).not.toBe(harness.session.sessionId);
 	});
 
 	it("does not resolve native summarization auth when Horizon supplies the checkpoint", async () => {

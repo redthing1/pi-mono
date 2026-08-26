@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
@@ -28,6 +29,7 @@ import {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
@@ -134,6 +136,7 @@ export {
 	createGrepTool,
 	createFindTool,
 	createLsTool,
+	createPowerShellTool,
 };
 
 // Helper Functions
@@ -257,6 +260,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
 			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
 			modelRuntime,
 			modelFilter: isModelAllowed,
 		});
@@ -283,7 +287,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			: (settingsManager.getDefaultThinkingLevel() ?? model?.defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL);
 	}
 
-	// Fall back to the explicit user default, then the provider-advertised model default.
+	// Fall back to per-model override, then global default
+	if (thinkingLevel === undefined && model) {
+		const perModel = settingsManager.getModelThinkingLevel(model.provider, model.id);
+		if (perModel) {
+			thinkingLevel = perModel;
+		}
+	}
 	if (thinkingLevel === undefined) {
 		thinkingLevel =
 			settingsManager.getDefaultThinkingLevel() ?? model?.defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL;
@@ -372,6 +382,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const headerRunner = extensionRunnerRef.current;
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				// A ZDR approval applies to this exact model. Provider-side model
+				// substitution must not silently cross that boundary.
+				allowModelFallbacks: privacy.remoteZdr ? false : options?.allowModelFallbacks,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
@@ -401,7 +414,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headers: response.headers,
 			});
 		},
-		sessionId: sessionManager.getSessionId(),
+		// Provider routing/cache identity must not expose the durable local session ID.
+		// Keep it stable only for this active runtime; resumed sessions receive a fresh ID.
+		sessionId: randomUUID(),
 		transformContext: async (messages) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner) return messages;

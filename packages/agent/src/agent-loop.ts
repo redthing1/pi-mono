@@ -281,19 +281,14 @@ export async function buildProviderContext(
 	config: Pick<AgentLoopConfig, "convertToLlm" | "transformContext">,
 	signal?: AbortSignal,
 ): Promise<Context> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
 	let messages = context.messages;
 	if (config.transformContext) {
 		messages = await config.transformContext(messages, signal);
 	}
 
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	// Build LLM context
 	return {
 		systemPrompt: context.systemPrompt,
-		messages: llmMessages,
+		messages: await config.convertToLlm(messages),
 		tools: context.tools,
 	};
 }

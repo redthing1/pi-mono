@@ -1,8 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, globSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME } from "../config.ts";
@@ -209,6 +208,18 @@ function isOverridePattern(s: string): boolean {
 
 function hasGlobPattern(s: string): boolean {
 	return s.includes("*") || s.includes("?");
+}
+
+/** Glob entries discover visible paths; exact entries can target dot paths or symlinked trees. */
+function expandPackageGlob(pattern: string, root: string): string[] {
+	return globSync(pattern, { cwd: root })
+		.map((match) => resolve(root, match))
+		.filter((path) =>
+			relative(root, path)
+				.split(sep)
+				.every((segment) => segment === ".." || !segment.startsWith(".")),
+		)
+		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function splitPatterns(entries: string[]): { plain: string[]; patterns: string[] } {
@@ -1410,12 +1421,7 @@ export class DefaultPackageManager implements PackageManager {
 				return [resolve(root, entry)];
 			}
 
-			return globSync(entry, {
-				cwd: root,
-				absolute: true,
-				dot: false,
-				nodir: false,
-			}).map((match) => resolve(match));
+			return expandPackageGlob(entry, root);
 		});
 		return this.collectFilesFromPaths(resolved, resourceType);
 	}
