@@ -1,5 +1,9 @@
 # Development Rules
 
+## Privacy
+
+- Respect privacy. Treat `~/.pi/agent/sessions` as sensitive; do not read, quote, or reference it without explicit permission.
+
 ## Fork Policy
 
 Read and follow [FORK.md](FORK.md) before changing dependencies, builds, installation, updates, package loading, or upstream integration. It is the authoritative fork-specific policy.
