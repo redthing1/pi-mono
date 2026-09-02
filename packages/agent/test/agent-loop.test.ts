@@ -491,6 +491,57 @@ describe("agentLoop with AgentMessage", () => {
 		expect(hookCalls).toBe(1);
 	});
 
+	it("restarts exact-context admission when steering arrives during replacement preparation", async () => {
+		const queuedMessage = createUserMessage("late steering");
+		const observedContexts: string[][] = [];
+		let steeringAvailable = false;
+		let steeringDelivered = false;
+		let dispatchedTexts: string[] = [];
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			beforeInference: (prepared) => {
+				observedContexts.push(
+					prepared.llmContext.messages.flatMap((message) =>
+						message.role === "user" && typeof message.content === "string" ? [message.content] : [],
+					),
+				);
+				if (!steeringAvailable) {
+					steeringAvailable = true;
+					return {
+						action: "replace",
+						context: { systemPrompt: "replacement", messages: [], tools: [] },
+					};
+				}
+				return { action: "send" };
+			},
+			getSteeringMessages: async () => {
+				if (!steeringAvailable || steeringDelivered) return [];
+				steeringDelivered = true;
+				return [queuedMessage];
+			},
+		};
+
+		const stream = agentLoop(
+			[createUserMessage("original")],
+			{ systemPrompt: "original", messages: [], tools: [] },
+			config,
+			undefined,
+			(_model, context) => {
+				dispatchedTexts = context.messages.flatMap((message) =>
+					message.role === "user" && typeof message.content === "string" ? [message.content] : [],
+				);
+				return createCompletedStream();
+			},
+		);
+
+		const messages = await stream.result();
+
+		expect(observedContexts).toEqual([["original"], ["original", "late steering"]]);
+		expect(dispatchedTexts).toEqual(["original", "late steering"]);
+		expect(messages).toContain(queuedMessage);
+	});
+
 	it("should handle tool calls and results", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
@@ -951,6 +1002,90 @@ describe("agentLoop with AgentMessage", () => {
 		expect(turnToolResultIds).toEqual(["tool-1", "tool-2"]);
 	});
 
+	it("does not start prepared parallel tools after a later preflight aborts", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const executions: string[] = [];
+		const preflights: string[] = [];
+		const resultHooks: string[] = [];
+		const controller = new AbortController();
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "external_write",
+			label: "External write",
+			description: "Perform an external write",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executions.push(params.value);
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+			beforeToolCall: async ({ args }) => {
+				const { value } = args as { value: string };
+				preflights.push(value);
+				if (value === "second") controller.abort();
+				return undefined;
+			},
+			afterToolCall: async ({ toolCall }) => {
+				resultHooks.push(toolCall.id);
+				return undefined;
+			},
+		};
+		const stream = agentLoop(
+			[createUserMessage("run both writes")],
+			{ systemPrompt: "", messages: [], tools: [tool] },
+			config,
+			controller.signal,
+			() => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					mockStream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[
+								{
+									type: "toolCall",
+									id: "tool-1",
+									name: "external_write",
+									arguments: { value: "first" },
+								},
+								{
+									type: "toolCall",
+									id: "tool-2",
+									name: "external_write",
+									arguments: { value: "second" },
+								},
+							],
+							"toolUse",
+						),
+					});
+				});
+				return mockStream;
+			},
+		);
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+
+		expect(preflights).toEqual(["first", "second"]);
+		expect(executions).toEqual([]);
+		expect(resultHooks).toEqual([]);
+		const starts = events.filter((event) => event.type === "tool_execution_start");
+		const ends = events.filter((event) => event.type === "tool_execution_end");
+		expect(starts).toHaveLength(2);
+		expect(ends).toHaveLength(2);
+		expect(new Set(ends.map((event) => event.toolCallId))).toEqual(new Set(starts.map((event) => event.toolCallId)));
+		expect(ends.every((event) => event.isError)).toBe(true);
+		const toolResults = (await stream.result()).filter((message) => message.role === "toolResult");
+		expect(toolResults.map((message) => message.toolCallId)).toEqual(starts.map((event) => event.toolCallId));
+		expect(
+			toolResults.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")).join("")),
+		).toEqual(["Operation aborted", "Operation aborted"]);
+	});
+
 	it("should inject queued messages after all tool calls complete", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
@@ -1321,11 +1456,13 @@ describe("agentLoop with AgentMessage", () => {
 			tools: [tool],
 		};
 		let convertedSecondTurnSystemPrompt = "";
+		let prepareCalls = 0;
 		let prepared = false;
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
 			prepareNextTurn: async ({ context: currentContext }) => {
+				prepareCalls++;
 				if (prepared) return undefined;
 				prepared = true;
 				return {
@@ -1371,6 +1508,7 @@ describe("agentLoop with AgentMessage", () => {
 		}
 
 		expect(llmCalls).toBe(2);
+		expect(prepareCalls).toBe(1);
 		expect(convertedSecondTurnSystemPrompt).toBe("second prompt");
 	});
 

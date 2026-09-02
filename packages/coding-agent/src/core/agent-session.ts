@@ -49,10 +49,8 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
-import { getSessionsDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
-import { getCwdRelativePath, resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -206,7 +204,6 @@ export type AgentSessionEvent =
 			reason: "manual" | "threshold" | "overflow";
 	  }
 	| { type: "summarization_retry_finished" }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "bash_execution_update"; id?: string; delta: string };
 
 /** Listener function for agent session events */
@@ -635,12 +632,12 @@ export class AgentSession {
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
-			const previousContext = previousSnapshot?.context ?? turn.context;
+			const nextContext = previousSnapshot?.context ?? turn.context;
 
 			return {
 				...previousSnapshot,
 				context: {
-					...previousContext,
+					...nextContext,
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
@@ -671,8 +668,7 @@ export class AgentSession {
 		}
 
 		if (this._pendingInferenceCompaction) {
-			this._discardPendingInferenceCompaction();
-			return { action: "stop", errorMessage: "Automatic compaction transaction was superseded" };
+			await this._finishInferenceCompaction(undefined, true);
 		}
 
 		const settings = this.settingsManager.getCompactionSettings();
@@ -3937,7 +3933,7 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
-		this._assertExportAllowed(outputPath);
+		this._assertExportAllowed();
 		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
 			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
 		);
@@ -3963,15 +3959,12 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
-		this._assertExportAllowed(outputPath);
+		this._assertExportAllowed();
 		return exportSessionToJsonl(this.sessionManager, outputPath);
 	}
 
-	private _assertExportAllowed(outputPath: string | undefined): void {
-		if (!this._privacy.clientZdr) return;
-		if (!outputPath || getCwdRelativePath(resolvePath(outputPath), getSessionsDir()) !== undefined) {
-			throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
-		}
+	private _assertExportAllowed(): void {
+		if (this._privacy.clientZdr) throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
 	}
 
 	// =========================================================================

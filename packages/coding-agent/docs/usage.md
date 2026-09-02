@@ -22,7 +22,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Press Tab to complete paths |
 | Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal |
-| Copy response | Ctrl+X copies the last assistant message; in `/tree`, it copies the selected message |
+| Copy response | Ctrl+X copies the selected message in `/tree`; otherwise it copies the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
@@ -137,7 +137,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Use `/export [file]` to write a session to HTML, or specify a `.jsonl` path for JSONL. Use `/import <file.jsonl>` to load a JSONL session.
 
-In client ZDR mode, export requires an explicit path outside pi's sessions directory. Import loads the file as detached in-memory state; it does not copy the file into session storage or append later messages to the source.
+Client ZDR mode disables session export and import. It also disables session resume, forking, sharing, and debug-log persistence so session content cannot cross the in-memory boundary.
 
 Use `/share` to upload a private GitHub gist with a shareable HTML link.
 

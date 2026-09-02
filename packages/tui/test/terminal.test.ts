@@ -5,6 +5,7 @@ import {
 	normalizeAppleTerminalInput,
 	normalizeNativeShiftEnterInput,
 	ProcessTerminal,
+	refreshTerminalDimensions,
 	resolveEscapeTimeoutMs,
 } from "../src/terminal.ts";
 
@@ -274,6 +275,39 @@ describe("ProcessTerminal progress", () => {
 });
 
 describe("ProcessTerminal dimensions", () => {
+	it("refreshes dimensions by self-signaling only when the platform permits it", () => {
+		const originalKill = process.kill;
+		const originalPlatform = process.platform;
+
+		try {
+			Object.defineProperty(process, "platform", { value: "linux" });
+			process.kill = (() => {
+				const kill: typeof process.kill = () => {
+					const error = new Error("kill EACCES") as NodeJS.ErrnoException;
+					error.code = "EACCES";
+					throw error;
+				};
+				return kill;
+			})();
+			assert.doesNotThrow(() => refreshTerminalDimensions());
+
+			Object.defineProperty(process, "platform", { value: "win32" });
+			let killCalled = false;
+			process.kill = (() => {
+				const kill: typeof process.kill = () => {
+					killCalled = true;
+					return true;
+				};
+				return kill;
+			})();
+			refreshTerminalDimensions();
+			assert.equal(killCalled, false);
+		} finally {
+			process.kill = originalKill;
+			Object.defineProperty(process, "platform", { value: originalPlatform });
+		}
+	});
+
 	it("falls back to COLUMNS and LINES before default dimensions", () => {
 		const previousColumnsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "columns");
 		const previousRowsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "rows");

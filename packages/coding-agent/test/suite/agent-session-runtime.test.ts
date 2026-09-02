@@ -39,7 +39,7 @@ describe("AgentSessionRuntime characterization", () => {
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
-		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
+		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean; inMemory?: boolean },
 	) {
 		const tempDir =
 			options?.cwd ?? join(tmpdir(), `pi-runtime-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -107,7 +107,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir),
+			sessionManager: options?.inMemory ? SessionManager.inMemory(tempDir) : SessionManager.create(tempDir),
 		});
 		await runtime.session.bindExtensions({});
 
@@ -210,6 +210,63 @@ describe("AgentSessionRuntime characterization", () => {
 			"toolResult",
 			"assistant",
 		]);
+	});
+
+	it("settles an active in-memory tool turn before forking the session", async () => {
+		let markToolStarted = () => {};
+		const toolStarted = new Promise<void>((resolve) => {
+			markToolStarted = resolve;
+		});
+		const { runtime, faux } = await createRuntimeForTest(
+			(pi: ExtensionAPI) => {
+				pi.registerTool({
+					name: "block",
+					label: "Block",
+					description: "Wait until aborted",
+					parameters: Type.Object({}),
+					execute: (_toolCallId, _params, signal) =>
+						new Promise<AgentToolResult<unknown>>((resolve) => {
+							markToolStarted();
+							signal?.addEventListener(
+								"abort",
+								() => resolve({ content: [{ type: "text", text: "tool aborted" }], details: {} }),
+								{ once: true },
+							);
+						}),
+				});
+			},
+			{ inMemory: true },
+		);
+
+		faux.setResponses([
+			fauxAssistantMessage("first response"),
+			fauxAssistantMessage(fauxToolCall("block", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("unused after abort"),
+		]);
+		await runtime.session.prompt("first prompt");
+		const firstUserEntryId = runtime.session.getUserMessagesForForking()[0]?.entryId;
+		expect(firstUserEntryId).toBeDefined();
+
+		const outgoingPrompt = runtime.session.prompt("start blocking tool");
+		await toolStarted;
+		const forkResult = await runtime.fork(firstUserEntryId!);
+		await outgoingPrompt;
+		await runtime.session.bindExtensions({});
+
+		expect(forkResult).toEqual({ cancelled: false, selectedText: "first prompt" });
+		expect(runtime.session.messages).toEqual([]);
+		expect(runtime.session.sessionManager.getEntries().filter((entry) => entry.type === "message")).toEqual([]);
+
+		let capturedRoles: string[] = [];
+		faux.setResponses([
+			(context) => {
+				capturedRoles = context.messages.map((message) => message.role);
+				return fauxAssistantMessage("next response");
+			},
+		]);
+		await runtime.session.prompt("next prompt");
+
+		expect(capturedRoles).toEqual(["user"]);
 	});
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {

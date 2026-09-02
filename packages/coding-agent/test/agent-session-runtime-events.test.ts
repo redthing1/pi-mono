@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -11,6 +11,7 @@ import {
 } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { ZDR_SESSION_ACCESS_DISABLED_MESSAGE } from "../src/core/privacy.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type {
 	ExtensionFactory,
@@ -181,23 +182,13 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
 	});
 
-	it("imports client ZDR sessions as detached in-memory state", async () => {
+	it("rejects persisted session access before inspecting paths in client ZDR", async () => {
 		const { runtimeHost, tempDir } = await createRuntimeHost(() => {}, true);
-		const imported = SessionManager.create(tempDir, join(tempDir, "imports"));
-		imported.appendMessage({ role: "user", content: "imported", timestamp: 1 });
-		imported.appendMessage(fauxAssistantMessage("reply"));
-		const sourcePath = imported.getSessionFile();
-		expect(sourcePath).toBeTruthy();
-		const sourceContent = readFileSync(sourcePath!, "utf-8");
+		const missingPath = join(tempDir, "does-not-exist.jsonl");
 
-		const result = await runtimeHost.importFromJsonl(sourcePath!);
-		expect(result).toEqual({ cancelled: false });
-		expect(runtimeHost.session.sessionManager.isPersisted()).toBe(false);
-		expect(runtimeHost.session.sessionFile).toBeUndefined();
-		expect(runtimeHost.session.messages[0]).toEqual({ role: "user", content: "imported", timestamp: 1 });
-
-		runtimeHost.session.sessionManager.appendMessage({ role: "user", content: "continued", timestamp: 2 });
-		expect(readFileSync(sourcePath!, "utf-8")).toBe(sourceContent);
+		await expect(runtimeHost.switchSession(missingPath)).rejects.toThrow(ZDR_SESSION_ACCESS_DISABLED_MESSAGE);
+		await expect(runtimeHost.importFromJsonl(missingPath)).rejects.toThrow(ZDR_SESSION_ACCESS_DISABLED_MESSAGE);
+		await expect(runtimeHost.fork("missing-entry")).rejects.toThrow(ZDR_SESSION_ACCESS_DISABLED_MESSAGE);
 	});
 
 	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {

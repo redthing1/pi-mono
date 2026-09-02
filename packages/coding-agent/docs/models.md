@@ -391,15 +391,13 @@ Behavior notes:
 
 ## Zero-data-retention
 
-`pi --zdr` combines local and remote controls: it keeps the session in memory, disables automatic persistence and managed session listing/resume/switching, and permits provider requests only for models explicitly approved with `zdr: true`. If no approved model is available within the selected provider scope, pi fails instead of falling back to another provider.
-
-Explicit file transfer remains available without disabling ZDR. `/export <path>` writes HTML or JSONL only when a destination outside pi's sessions directory is provided; bare `/export` remains disabled. `/import <path.jsonl>` loads the file as detached in-memory state without copying it into session storage or appending later messages to the source file.
+`pi --zdr` combines local and remote controls: it keeps the session in memory, disables persistence, listing, resume, switching, import, export, forking, sharing, and debug-log persistence, and permits provider requests only for models explicitly approved with `zdr: true`. If no approved model is available within the selected provider scope, pi fails instead of falling back to another provider.
 
 `pi --zdr-server` applies only the remote control: it keeps normal local session persistence while permitting provider requests only for explicitly approved models. This is useful when local history is desired but every remote request must use a server-ZDR-approved route.
 
 Set `zdr` on a provider to apply the approval to its configured models, or set it per model or in `modelOverrides` for finer control. An OpenRouter model with `compat.openRouterRouting.zdr: true` is also recognized as approved. This flag is an operator assertion; verify the provider policy and route before setting it.
 
-`pi --zdr-client` (and `--no-session`) applies only the local in-memory-session control. It does not assert or require a provider's remote retention policy.
+`pi --zdr-client` (and `--no-session`) applies only the same strict local in-memory-session control. It does not assert or require a provider's remote retention policy.
 
 ```json
 {

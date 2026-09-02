@@ -232,15 +232,17 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 
 	/**
-	 * Called after context transformation and LLM conversion, immediately before provider dispatch.
+	 * Called after context transformation and LLM conversion at the final prepared-request boundary.
 	 *
 	 * Return `send` or undefined to dispatch the exact prepared request, `replace` to prepare one raw
 	 * replacement context in the same turn, or `stop` to end the run with a local error assistant
 	 * message. A replacement is transformed and converted once, then presented to this callback with
 	 * `replacementCount: 1`; a second replacement is rejected.
 	 *
-	 * Dynamic credentials are resolved only after the request is accepted. The callback receives the
-	 * run abort signal and must not throw, reject, or mutate either prepared context.
+	 * Dynamic credentials are resolved only after the request is accepted. Steering queued while this
+	 * callback or replacement preparation is running invalidates the decision and restarts preparation
+	 * with that steering included. The callback receives the run abort signal and must not throw, reject,
+	 * or mutate either prepared context.
 	 */
 	beforeInference?: (
 		context: BeforeInferenceContext,
@@ -252,6 +254,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
 	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
+	 * This callback sees the completed-turn context and runs before `prepareNextTurn`.
 	 *
 	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
 	 *
@@ -260,8 +263,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 
 	/**
-	 * Called after `turn_end` and before the loop decides whether another provider request should start.
-	 * Return replacement context/model/thinking state to affect the next turn in this run.
+	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
+	 * Return replacement context/model/thinking state to affect that turn.
 	 * Return undefined to keep using the current context/config.
 	 */
 	prepareNextTurn?: (
@@ -271,8 +274,9 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Returns steering messages to inject into the conversation mid-run.
 	 *
-	 * Called after the current assistant turn finishes executing its tool calls, unless `shouldStopAfterTurn` exits first.
-	 * If messages are returned, they are added to the context before the next LLM call.
+	 * Called after the current assistant turn finishes executing its tool calls, unless `shouldStopAfterTurn` exits first,
+	 * and again at a prepared-request boundary when `beforeInference` may have taken long enough for new steering to arrive.
+	 * If messages are returned, they are added to the context before the next LLM call and request preparation restarts.
 	 * Tool calls from the current assistant message are not skipped.
 	 *
 	 * Use this for "steering" the agent while it's working.

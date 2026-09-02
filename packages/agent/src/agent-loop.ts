@@ -20,6 +20,7 @@ import type {
 	AgentToolCall,
 	AgentToolResult,
 	BeforeInferenceContext,
+	PrepareNextTurnContext,
 	StreamFn,
 } from "./types.ts";
 
@@ -163,7 +164,7 @@ async function runLoop(
 ): Promise<void> {
 	let currentContext = initialContext;
 	let config = initialConfig;
-	let firstTurn = true;
+	let lastCompletedTurn: PrepareNextTurnContext | undefined;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -173,10 +174,28 @@ async function runLoop(
 
 		// Inner loop: process tool calls and steering messages
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
-			if (!firstTurn) {
+			if (lastCompletedTurn) {
+				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
+				if (nextTurnSnapshot) {
+					currentContext = nextTurnSnapshot.context ?? currentContext;
+					config = {
+						...config,
+						model: nextTurnSnapshot.model ?? config.model,
+						reasoning:
+							nextTurnSnapshot.thinkingLevel === undefined
+								? config.reasoning
+								: nextTurnSnapshot.thinkingLevel === "off"
+									? undefined
+									: nextTurnSnapshot.thinkingLevel,
+					};
+				}
+				// Preparation can be long-running (for example, compaction). Pick up steering
+				// queued while it ran. Only poll again if the earlier poll returned nothing;
+				// otherwise one-at-a-time mode would deliver two messages in this turn.
+				if (pendingMessages.length === 0) {
+					pendingMessages = (await config.getSteeringMessages?.()) || [];
+				}
 				await emit({ type: "turn_start" });
-			} else {
-				firstTurn = false;
 			}
 
 			// Process pending messages (inject before next assistant response)
@@ -191,7 +210,14 @@ async function runLoop(
 			}
 
 			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
+			const message = await streamAssistantResponse(
+				currentContext,
+				config,
+				signal,
+				emit,
+				streamFunction,
+				(queuedMessage) => newMessages.push(queuedMessage),
+			);
 			newMessages.push(message);
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -224,35 +250,14 @@ async function runLoop(
 
 			await emit({ type: "turn_end", message, toolResults });
 
-			const nextTurnContext = {
+			lastCompletedTurn = {
 				message,
 				toolResults,
 				context: currentContext,
 				newMessages,
 			};
-			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
-			if (nextTurnSnapshot) {
-				currentContext = nextTurnSnapshot.context ?? currentContext;
-				config = {
-					...config,
-					model: nextTurnSnapshot.model ?? config.model,
-					reasoning:
-						nextTurnSnapshot.thinkingLevel === undefined
-							? config.reasoning
-							: nextTurnSnapshot.thinkingLevel === "off"
-								? undefined
-								: nextTurnSnapshot.thinkingLevel,
-				};
-			}
 
-			if (
-				await config.shouldStopAfterTurn?.({
-					message,
-					toolResults,
-					context: currentContext,
-					newMessages,
-				})
-			) {
+			if (await config.shouldStopAfterTurn?.(lastCompletedTurn)) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
@@ -328,60 +333,84 @@ async function streamAssistantResponse(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
+	onQueuedMessage: (message: AgentMessage) => void,
 ): Promise<AssistantMessage> {
 	const context = initialContext;
 	if (signal?.aborted) {
 		return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
 	}
 
+	const injectQueuedSteering = async (): Promise<boolean> => {
+		const queuedMessages = (await config.getSteeringMessages?.()) ?? [];
+		for (const queuedMessage of queuedMessages) {
+			await emit({ type: "message_start", message: queuedMessage });
+			await emit({ type: "message_end", message: queuedMessage });
+			context.messages.push(queuedMessage);
+			onQueuedMessage(queuedMessage);
+		}
+		return queuedMessages.length > 0;
+	};
+
 	let llmContext: Context;
 	if (config.beforeInference) {
-		let prepared = await prepareInference(context, copyAgentContext(context), config, signal, 0);
-		if (signal?.aborted) {
-			return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
-		}
-
-		const firstDecision = (await config.beforeInference(prepared, signal)) ?? { action: "send" as const };
-		if (signal?.aborted) {
-			return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
-		}
-
-		if (firstDecision.action === "stop") {
-			return stopPreparedInference(context, config.model, firstDecision.errorMessage, "error", emit);
-		}
-
-		if (firstDecision.action === "replace") {
-			const replacementContext = copyAgentContext(firstDecision.context);
-			prepared = await prepareInference(replacementContext, replacementContext, config, signal, 1);
+		while (true) {
+			let prepared = await prepareInference(context, copyAgentContext(context), config, signal, 0);
 			if (signal?.aborted) {
 				return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
 			}
 
-			const secondDecision = (await config.beforeInference(prepared, signal)) ?? { action: "send" as const };
-			if (secondDecision.action === "replace") {
-				return stopPreparedInference(
-					context,
-					config.model,
-					"beforeInference may replace a pending inference at most once",
-					"error",
-					emit,
-				);
-			}
-			if (secondDecision.action === "stop") {
-				return stopPreparedInference(context, config.model, secondDecision.errorMessage, "error", emit);
-			}
-
-			// The second-pass send is the acceptance point. Agent's wrapper adopts the
-			// same raw snapshot before this callback returns to the loop.
-			context.systemPrompt = replacementContext.systemPrompt;
-			context.messages = replacementContext.messages;
-			context.tools = replacementContext.tools;
+			const firstDecision = (await config.beforeInference(prepared, signal)) ?? { action: "send" as const };
 			if (signal?.aborted) {
 				return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
 			}
-		}
 
-		llmContext = prepared.llmContext;
+			if (firstDecision.action === "stop") {
+				return stopPreparedInference(context, config.model, firstDecision.errorMessage, "error", emit);
+			}
+
+			// Admission or checkpoint generation may be long-running. Steering that
+			// arrived meanwhile must be persisted normally and included in a fresh
+			// exact provider-context decision, never appended after acceptance.
+			if (await injectQueuedSteering()) continue;
+
+			if (firstDecision.action === "replace") {
+				const replacementContext = copyAgentContext(firstDecision.context);
+				prepared = await prepareInference(replacementContext, replacementContext, config, signal, 1);
+				if (signal?.aborted) {
+					return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+				}
+
+				// A context transform can also be long-running. Restart before accepting
+				// the candidate if steering arrived while preparing its second pass.
+				if (await injectQueuedSteering()) continue;
+
+				const secondDecision = (await config.beforeInference(prepared, signal)) ?? { action: "send" as const };
+				if (secondDecision.action === "replace") {
+					return stopPreparedInference(
+						context,
+						config.model,
+						"beforeInference may replace a pending inference at most once",
+						"error",
+						emit,
+					);
+				}
+				if (secondDecision.action === "stop") {
+					return stopPreparedInference(context, config.model, secondDecision.errorMessage, "error", emit);
+				}
+
+				// The second-pass send is the acceptance point. Agent's wrapper adopts the
+				// same raw snapshot before this callback returns to the loop.
+				context.systemPrompt = replacementContext.systemPrompt;
+				context.messages = replacementContext.messages;
+				context.tools = replacementContext.tools;
+				if (signal?.aborted) {
+					return stopPreparedInference(context, config.model, "Operation aborted", "aborted", emit);
+				}
+			}
+
+			llmContext = prepared.llmContext;
+			break;
+		}
 	} else {
 		// Preserve the default path: no defensive raw-context snapshot without a hook.
 		llmContext = await buildProviderContext(context, config, signal);
@@ -641,6 +670,15 @@ async function executeToolCallsParallel(
 		}
 
 		finalizedCalls.push(async () => {
+			if (signal?.aborted) {
+				const finalized = {
+					toolCall,
+					result: createErrorToolResult("Operation aborted"),
+					isError: true,
+				} satisfies FinalizedToolCallOutcome;
+				await emitToolExecutionEnd(finalized, emit);
+				return finalized;
+			}
 			const executed = await executePreparedToolCall(preparation, signal, emit);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
