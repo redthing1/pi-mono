@@ -48,12 +48,7 @@ import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dis
 import { resolveCliModel, resolveCliProvider, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
-import {
-	mergePrivacyMode,
-	type PrivacyMode,
-	ZDR_EXPORT_DISABLED_MESSAGE,
-	ZDR_MODEL_REQUIRED_MESSAGE,
-} from "./core/privacy.ts";
+import { mergePrivacyMode, type PrivacyMode, ZDR_MODEL_REQUIRED_MESSAGE } from "./core/privacy.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -567,14 +562,6 @@ function privacyModeFromArgs(parsed: Args): PrivacyMode {
 }
 
 function validatePrivacyFlags(parsed: Args): void {
-	if (parsed.export && parsed.zdr) {
-		console.error(chalk.red(`Error: ${ZDR_EXPORT_DISABLED_MESSAGE}`));
-		process.exit(1);
-	}
-	if (parsed.export && parsed.noSession) {
-		console.error(chalk.red("Error: --export cannot be combined with --no-session"));
-		process.exit(1);
-	}
 	if (parsed.zdr && (parsed.session || parsed.fork || parsed.continue || parsed.resume)) {
 		console.error(chalk.red("Error: --zdr cannot resume, continue, or fork stored sessions"));
 		process.exit(1);

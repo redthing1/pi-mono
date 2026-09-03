@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
-import { ZDR_EXPORT_DISABLED_MESSAGE, ZDR_MODEL_REQUIRED_MESSAGE } from "../src/core/privacy.ts";
+import { ZDR_EXPORT_PATH_REQUIRED_MESSAGE, ZDR_MODEL_REQUIRED_MESSAGE } from "../src/core/privacy.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 
 describe("zero-data-retention mode", () => {
@@ -92,7 +92,7 @@ describe("zero-data-retention mode", () => {
 		expect(extensionModel && runtime.isZdrModel(extensionModel)).toBe(true);
 	});
 
-	it("keeps client ZDR sessions in memory and disables every export path", async () => {
+	it("keeps client ZDR sessions in memory while allowing explicit exports", async () => {
 		const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
 		const approved = modelRuntime.getModel("zdr-provider", "approved");
 		const notApproved = modelRuntime.getModel("zdr-provider", "not-approved");
@@ -123,11 +123,12 @@ describe("zero-data-retention mode", () => {
 
 			const jsonlPath = join(tempDir, "session.jsonl");
 			const htmlPath = join(tempDir, "session.html");
-			expect(() => session.exportToJsonl(jsonlPath)).toThrow(ZDR_EXPORT_DISABLED_MESSAGE);
-			await expect(session.exportToHtml(htmlPath)).rejects.toThrow(ZDR_EXPORT_DISABLED_MESSAGE);
-			expect(() => session.exportToJsonl()).toThrow(ZDR_EXPORT_DISABLED_MESSAGE);
-			expect(existsSync(jsonlPath)).toBe(false);
-			expect(existsSync(htmlPath)).toBe(false);
+			expect(session.exportToJsonl(jsonlPath)).toBe(jsonlPath);
+			await expect(session.exportToHtml(htmlPath)).resolves.toBe(htmlPath);
+			expect(existsSync(jsonlPath)).toBe(true);
+			expect(existsSync(htmlPath)).toBe(true);
+			expect(() => session.exportToJsonl()).toThrow(ZDR_EXPORT_PATH_REQUIRED_MESSAGE);
+			await expect(session.exportToHtml()).rejects.toThrow(ZDR_EXPORT_PATH_REQUIRED_MESSAGE);
 		} finally {
 			session.dispose();
 		}

@@ -105,7 +105,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import {
 	DEFAULT_PRIVACY_MODE,
 	type PrivacyMode,
-	ZDR_EXPORT_DISABLED_MESSAGE,
+	ZDR_EXPORT_PATH_REQUIRED_MESSAGE,
 	ZDR_MODEL_REQUIRED_MESSAGE,
 } from "./privacy.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -3933,7 +3933,7 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
-		this._assertExportAllowed();
+		this._assertExportPath(outputPath);
 		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
 			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
 		);
@@ -3959,12 +3959,12 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
-		this._assertExportAllowed();
+		this._assertExportPath(outputPath);
 		return exportSessionToJsonl(this.sessionManager, outputPath);
 	}
 
-	private _assertExportAllowed(): void {
-		if (this._privacy.clientZdr) throw new Error(ZDR_EXPORT_DISABLED_MESSAGE);
+	private _assertExportPath(outputPath: string | undefined): void {
+		if (this._privacy.clientZdr && !outputPath) throw new Error(ZDR_EXPORT_PATH_REQUIRED_MESSAGE);
 	}
 
 	// =========================================================================

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -182,13 +182,42 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
 	});
 
-	it("rejects persisted session access before inspecting paths in client ZDR", async () => {
+	it("rejects persisted session switching before inspecting paths in client ZDR", async () => {
 		const { runtimeHost, tempDir } = await createRuntimeHost(() => {}, true);
 		const missingPath = join(tempDir, "does-not-exist.jsonl");
 
 		await expect(runtimeHost.switchSession(missingPath)).rejects.toThrow(ZDR_SESSION_ACCESS_DISABLED_MESSAGE);
-		await expect(runtimeHost.importFromJsonl(missingPath)).rejects.toThrow(ZDR_SESSION_ACCESS_DISABLED_MESSAGE);
 		await expect(runtimeHost.fork("missing-entry")).rejects.toThrow(ZDR_SESSION_ACCESS_DISABLED_MESSAGE);
+	});
+
+	it("resumes an exported ZDR session either detached or with normal persistence", async () => {
+		const { runtimeHost: zdrRuntime, tempDir } = await createRuntimeHost(() => {}, true);
+		zdrRuntime.session.sessionManager.appendMessage({ role: "user", content: "exported from ZDR", timestamp: 1 });
+		zdrRuntime.session.sessionManager.appendMessage(fauxAssistantMessage("reply"));
+		const sourcePath = join(tempDir, "zdr-session.jsonl");
+		expect(zdrRuntime.session.exportToJsonl(sourcePath)).toBe(sourcePath);
+		const sourceContent = readFileSync(sourcePath, "utf-8");
+
+		const result = await zdrRuntime.importFromJsonl(sourcePath);
+		expect(result).toEqual({ cancelled: false });
+		expect(zdrRuntime.session.sessionManager.isPersisted()).toBe(false);
+		expect(zdrRuntime.session.sessionFile).toBeUndefined();
+		expect(zdrRuntime.session.messages[0]).toEqual({ role: "user", content: "exported from ZDR", timestamp: 1 });
+
+		zdrRuntime.session.sessionManager.appendMessage({ role: "user", content: "continued in ZDR", timestamp: 2 });
+		expect(readFileSync(sourcePath, "utf-8")).toBe(sourceContent);
+
+		const { runtimeHost: normalRuntime } = await createRuntimeHost(() => {});
+		await expect(normalRuntime.importFromJsonl(sourcePath)).resolves.toEqual({ cancelled: false });
+		expect(normalRuntime.session.sessionManager.isPersisted()).toBe(true);
+		expect(normalRuntime.session.messages[0]).toEqual({ role: "user", content: "exported from ZDR", timestamp: 1 });
+		const persistedPath = normalRuntime.session.sessionFile;
+		expect(persistedPath).toBeTruthy();
+		expect(persistedPath).not.toBe(sourcePath);
+
+		normalRuntime.session.sessionManager.appendMessage({ role: "user", content: "continued normally", timestamp: 3 });
+		expect(readFileSync(sourcePath, "utf-8")).toBe(sourceContent);
+		expect(readFileSync(persistedPath!, "utf-8")).toContain("continued normally");
 	});
 
 	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {

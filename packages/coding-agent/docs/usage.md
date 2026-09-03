@@ -137,7 +137,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Use `/export [file]` to write a session to HTML, or specify a `.jsonl` path for JSONL. Use `/import <file.jsonl>` to load a JSONL session.
 
-Client ZDR mode disables session export and import. It also disables session resume, forking, sharing, and debug-log persistence so session content cannot cross the in-memory boundary.
+In client ZDR mode, export requires an explicit destination but does not restrict its location. Import loads detached in memory without copying or modifying the source. Session resume, forking, sharing, and debug-log persistence remain disabled.
 
 Use `/share` to upload a private GitHub gist with a shareable HTML link.
 
